@@ -2,7 +2,7 @@
 
 import random
 
-from jiyuu.layout import LayoutSettings, Rect, layout, subtree_height
+from jiyuu.layout import LayoutSettings, Plane, Rect, layout, subtree_height
 from jiyuu.measure import FixedMeasurer
 from jiyuu.model import Node
 
@@ -130,3 +130,34 @@ def test_every_edge_touches_its_two_boxes_facing_edges_across_random_trees() -> 
                 assert child_rect.x == parent_rect.x + parent_rect.width + SETTINGS.horizontal_gap
             else:
                 assert child_rect.x + child_rect.width == parent_rect.x - SETTINGS.horizontal_gap
+
+
+def test_plane_puts_every_box_at_a_non_negative_position_inside_its_size() -> None:
+    """After `fit`, every box is at least `margin` from the plane's top-left corner, and the
+    plane is large enough to hold every box with `margin` to spare on the far side too."""
+    tree = _random_tree(random.Random(0), node_count=50)
+    rects, _ = layout(tree, MEASURER, SETTINGS)
+    plane = Plane()
+    moved = plane.fit(rects, margin=40.0)
+
+    assert min(rect.x for rect in moved.values()) == 40.0
+    assert min(rect.y for rect in moved.values()) == 40.0
+    assert max(rect.x + rect.width for rect in moved.values()) + 40.0 == plane.width
+    assert max(rect.y + rect.height for rect in moved.values()) + 40.0 == plane.height
+
+
+def test_plane_keeps_the_root_still_when_a_branch_is_folded() -> None:
+    """Folding a branch shrinks the layout, but the plane does not shrink with it, so the
+    root's box stays where it was on the drawing surface."""
+    left = Node(text="Left", side="left", children=[Node(text=f"l{i}") for i in range(8)])
+    right = Node(text="Right", side="right")
+    root = Node(text="Project", children=[left, right])
+    plane = Plane()
+    before = plane.fit(layout(root, MEASURER, SETTINGS)[0], margin=40.0)[root]
+    size_before = (plane.width, plane.height)
+
+    left.folded = True
+    after = plane.fit(layout(root, MEASURER, SETTINGS)[0], margin=40.0)[root]
+
+    assert after == before
+    assert (plane.width, plane.height) == size_before

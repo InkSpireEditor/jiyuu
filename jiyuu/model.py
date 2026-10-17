@@ -74,6 +74,24 @@ def walk(root: Node) -> Iterator[Node]:
         yield from walk(child)
 
 
+def depths(root: Node) -> dict[Node, int]:
+    """Every node's distance from `root`: `0` for `root` itself, `1` for its children, and
+    so on — folded or not."""
+    result = {root: 0}
+    pending = [root]
+    while pending:
+        node = pending.pop()
+        for child in node.children:
+            result[child] = result[node] + 1
+            pending.append(child)
+    return result
+
+
+def descendant_count(node: Node) -> int:
+    """How many nodes are under `node`, at any depth, not counting `node` itself."""
+    return sum(1 for _ in walk(node))
+
+
 def parent_of(node: Node, root: Node) -> Node | None:
     """The parent of `node` in the tree rooted at `root`, or `None` if `node` is `root`.
 

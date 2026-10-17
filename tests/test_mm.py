@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from jiyuu.formats import read_map
 from jiyuu.formats.mm import read
 from jiyuu.model import Node
 
@@ -33,8 +34,8 @@ def test_freemind_style_file_with_text_on_every_node() -> None:
 
 
 def test_worked_example_reads_to_the_documented_tree() -> None:
-    """The exact `.mm` from `ROADMAP.md`'s step 4 reads to the tree and metadata described
-    there: `Goals` right and unfolded, `Risks` left, folded, and read from its rich text."""
+    """The worked-example fixture reads to the tree it encodes: `Goals` right and unfolded,
+    `Risks` left, folded, and read from its rich text rather than a `TEXT` attribute."""
     mindmap, warnings = read(_fixture("worked-example.mm"))
 
     assert mindmap is not None
@@ -176,3 +177,27 @@ def test_position_on_a_non_first_level_node_is_ignored_silently() -> None:
     assert isinstance(grandchild, Node)
     assert grandchild.side is None
     assert warnings == []
+
+
+def test_read_map_picks_the_reader_from_the_extension() -> None:
+    """A `.mm` path goes to the `.mm` reader."""
+    mindmap, warnings = read_map(FIXTURES / "worked-example.mm")
+    assert mindmap is not None
+    assert mindmap.root.text == "Project"
+    assert warnings == []
+
+
+def test_read_map_refuses_an_extension_it_has_no_reader_for(tmp_path: Path) -> None:
+    """An extension with no reader gives no map and says why, rather than guessing."""
+    path = tmp_path / "map.txt"
+    path.write_text("Project", encoding="utf-8")
+    mindmap, warnings = read_map(path)
+    assert mindmap is None
+    assert "no reader" in warnings[0]
+
+
+def test_read_map_reports_a_file_that_cannot_be_read(tmp_path: Path) -> None:
+    """A missing file gives no map and a warning, not an exception."""
+    mindmap, warnings = read_map(tmp_path / "missing.mm")
+    assert mindmap is None
+    assert "cannot be read" in warnings[0]

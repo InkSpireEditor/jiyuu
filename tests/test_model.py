@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from jiyuu.model import MindMap, Node, node_id, parent_of, path_of, walk
+from jiyuu.model import MindMap, Node, depths, descendant_count, node_id, parent_of, path_of, walk
 
 NODE_IDS_FIXTURE = Path(__file__).parent / "data" / "node_ids.json"
 
@@ -88,3 +88,20 @@ def test_mindmap_defaults_to_empty_metadata() -> None:
     mindmap = MindMap(root=Node(text="Project"))
     assert mindmap.meta == {}
     assert mindmap.other_sections == {}
+
+
+def test_depths_counts_distance_from_the_root_folded_or_not() -> None:
+    """The root is at depth 0, its children at 1, and a folded node's children still count."""
+    grandchild = Node(text="I/O")
+    child = Node(text="Goals", folded=True, children=[grandchild])
+    root = Node(text="Project", children=[child])
+
+    assert depths(root) == {root: 0, child: 1, grandchild: 2}
+
+
+def test_descendant_count_counts_every_level_but_not_the_node_itself() -> None:
+    """Two children, one of which has a child of its own: three descendants."""
+    node = Node(text="Goals", children=[Node(text="I/O", children=[Node(text="Sockets")]), Node(text="TODO")])
+
+    assert descendant_count(node) == 3
+    assert descendant_count(Node(text="leaf")) == 0

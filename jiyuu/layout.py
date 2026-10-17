@@ -53,6 +53,38 @@ class Edge:
     side: Side
 
 
+@dataclass
+class Plane:
+    """Where a laid-out map sits on a drawing surface whose origin is its top-left corner.
+
+    `layout` centres a map on `(0, 0)`, so about half of it has negative coordinates, while
+    a drawing surface needs every box at a non-negative offset. `offset_x`/`offset_y` is
+    added to every box; `width`/`height` is the surface size that then holds all of them.
+    """
+
+    offset_x: float = 0.0
+    offset_y: float = 0.0
+    width: float = 0.0
+    height: float = 0.0
+
+    def fit(self, rects: dict[Node, Rect], margin: float) -> dict[Node, Rect]:
+        """`rects` moved onto this plane, growing the plane if they do not fit it already.
+
+        The offset and size only ever grow, never shrink: so folding a branch, which takes
+        boxes away, leaves every remaining box where it was on the surface instead of
+        moving the whole map to fill the space the branch used to take up.
+        """
+        self.offset_x = max(self.offset_x, margin - min(rect.x for rect in rects.values()))
+        self.offset_y = max(self.offset_y, margin - min(rect.y for rect in rects.values()))
+        moved = {
+            node: Rect(rect.x + self.offset_x, rect.y + self.offset_y, rect.width, rect.height)
+            for node, rect in rects.items()
+        }
+        self.width = max(self.width, max(rect.x + rect.width for rect in moved.values()) + margin)
+        self.height = max(self.height, max(rect.y + rect.height for rect in moved.values()) + margin)
+        return moved
+
+
 def node_box_size(node: Node, measurer: Measurer, settings: LayoutSettings) -> tuple[float, float]:
     """A node's own box size: its text's size, plus padding on every side."""
     width, height = measurer.size_of(node.text)

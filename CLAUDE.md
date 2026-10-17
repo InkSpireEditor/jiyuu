@@ -38,10 +38,10 @@ file" for how a step's status and checkboxes are tracked.
   the user commits every change in this repository, without exception. If asked to commit
   anyway, stage the change and restate this rule rather than committing.
 - Do not start the next step in the same change that finishes the current one.
-- Grow `scripts/demo_viewer.py` alongside the backend rather than deferring everything
-  visual to step 5: whenever a step produces something worth looking at, extend it to show
-  that too, so the user can see and try new features regularly rather than only reading a
-  test-pass report. See the Cross-cutting guards in `ROADMAP.md`.
+- Grow the window (`jiyuu open`, `jiyuu/ui/`) alongside the backend: whenever a step
+  produces something worth looking at, make the window show it too, so the user can see and
+  try new features regularly rather than only reading a test-pass report. See the
+  Cross-cutting guards in `ROADMAP.md`.
 - If a step's done condition cannot be met, leave it `in progress` and write the failure
   under that step rather than marking it done.
 - A step's data structures, algorithms, numeric defaults and worked examples in `ROADMAP.md`

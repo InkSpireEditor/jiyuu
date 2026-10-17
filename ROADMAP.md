@@ -67,7 +67,10 @@ Status values: `todo`, `in progress`, `done`, `blocked: <reason>`.
 | Colours live in YAML theme files (`jiyuu/assets/themes/`), never as constants in UI code; five bundled: `nord` (from Freeplane's `dark_nord_template.mm`), `nord-frost`, `nord-aurora`, `tokyonight-night` (default), `solarized-dark` | User's choice: themes stored separately and editable without touching code; `tokyonight-night` as default, chosen by the user after seeing them |
 | Theme contrast floor is 3.0 (WCAG AA large text / non-text), not 4.5 | Several palette colours cannot reach 4.5 against any text colour in their own palette; replacing them would no longer be the palette |
 | Themes are step 4.5, before the viewer, not 5.5 after it | Theme loading has no Flet dependency, and the viewer can be built on it from the start instead of being refactored afterwards |
-| `InteractiveViewer` needs `constrained=False` and a large `boundary_margin` to pan at all around content bigger than the viewport, and `trackpad_scroll_causes_scale=True` so a trackpad's scroll zooms (matching FreeMind) rather than pans | Found by hand in step 3's demo viewer; step 1's check B never exercised real pointer gestures, only the programmatic `.pan`/`.zoom` calls, so this went unnoticed until something used it interactively |
+| Zoom is Ctrl + two-finger vertical move; a two-finger move or click-and-drag pans; no pinch | Pinch reaches Flet with a scale stuck at 1.0 on this Linux platform, and trackpad scrolling never reaches `on_scroll`; tested by hand in step 5 |
+| Maps open from the command line only (`jiyuu open <file>`); no in-app File → Open yet | Flet's `FilePicker` needs Zenity on Linux, not installed here; the user chose to defer it |
+| `InteractiveViewer` needs `constrained=False` and a large `boundary_margin` to pan at all around content bigger than the viewport, and `trackpad_scroll_causes_scale=True` so a trackpad's scroll zooms (matching FreeMind) rather than pans | Found by hand in step 3's demo viewer; step 1's check B never exercised real pointer gestures, only the programmatic `.pan`/`.zoom` calls, so this went unnoticed until something used it interactively (step 5 later stopped using `InteractiveViewer` for the window itself; see the next row) |
+| The window pans and zooms by setting the map's `left`/`top`/`scale` from a `jiyuu.view.View`, not with `InteractiveViewer` | `InteractiveViewer` can only zoom around its content's top-left corner, so zooming around the pointer took two calls and jittered; found by hand in step 5 |
 
 ## The `.ink` map file
 
@@ -364,9 +367,10 @@ These apply to every step below, not just the one that introduces them.
 - Autosave never overwrites a file that changed on disk since jiyuu last read or wrote it.
 - Writes are atomic: write a temporary file in the same directory, then `os.replace`.
 - Whenever a step produces something visually meaningful (a tree, a computed layout, a
-  parsed map), `scripts/demo_viewer.py` is extended to show it in a real Flet window, so the
-  user can look at and try new features as they land rather than only reading a test-pass
-  report. It is promoted into `jiyuu/ui/app.py` at step 5 rather than discarded.
+  parsed map), it is shown in a real Flet window, so the user can look at and try new
+  features as they land rather than only reading a test-pass report. Until step 5 that was
+  `scripts/demo_viewer.py`; step 5 moved it into `jiyuu/ui/` and removed the script, so from
+  then on it is the real window, opened with `jiyuu open`, that grows with each step.
 
 ## Steps
 
@@ -1065,46 +1069,84 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
 
 ### Step 5: Viewer window
 
-- [ ] Status: `todo`
+- [x] Status: `done`
 - Depends on: 1, 3, 4, 4.5.
 - Tasks:
-  - [ ] `jiyuu/ui/app.py`: `flet.app(target=build)`, where `build(page)` creates one
-        `AppState` (current `MindMap`, current `dict[Node, Rect]`/`list[Edge]` from
-        `layout.py`, selected node) and wires it to the controls below.
-  - [ ] `jiyuu/ui/canvas.py`: for each visible node (its nearest folded ancestor, if any,
-        is not itself — a node under a folded ancestor is not drawn at all), one
-        `ft.Container` positioned at its `Rect` inside an `ft.Stack`; edges drawn on an
-        `ft.canvas.Canvas` behind the `Stack`, as Bézier paths per step 3. If step 1 forced
-        the canvas-only fallback, draw node boxes and text on the canvas instead and do the
-        hit-testing in Python against the same `Rect`s.
-  - [ ] A fold marker drawn on any node with at least one child, showing the number of
-        *hidden* descendants when folded (nothing when unfolded and nothing when a leaf).
-        Clicking it toggles `node.folded` and re-runs `layout.layout(...)` — folding state
-        lives only in memory until step 12 wires up saving.
-  - [ ] `jiyuu open <file>` (`.mm` or `.ink`, picked by extension) and a File → Open file
-        picker (`ft.FilePicker`).
-  - [ ] Pan by dragging the background (`ft.InteractiveViewer`, or manual drag handling if
-        the fallback from step 1 applies); zoom with the mouse wheel, clamped to a sane
-        range (e.g. 25%–400%). Carry over the `constrained`/`boundary_margin`/
-        `trackpad_scroll_causes_scale` settings step 3's demo viewer needed (Decisions
-        table) rather than rediscovering them, and resolve the two issues step 3 deferred
-        here: a trackpad's scroll-to-zoom direction, which felt backwards to at least one
-        user, and a general, hands-on check of pan/zoom feel now that it is the real
-        viewer, not a demo script.
-  - [ ] "Centre on root", bound to Escape: resets pan/zoom so the root's `Rect` is centred
-        in the viewport at 100%.
-  - [ ] The window title is `"{file name} — jiyuu"`.
-  - [ ] Every colour drawn comes from the active `Theme` (step 4.5), selected with
+  - [x] `jiyuu/ui/app.py`: `run(mindmap, path, theme)` opens the window (`ft.run`; Flet 1.0
+        renamed `flet.app(target=...)` to it). One `MapWindow` holds the map, its layout
+        (`dict[Node, Rect]`, `list[Edge]`), the drawing surface and the controls. The
+        selected node arrives with step 6.
+  - [x] `jiyuu/ui/canvas.py`: for each visible node, one `ft.Container` at its `Rect` inside
+        an `ft.Stack`, over one `ft.canvas.Canvas` holding every edge as a Bézier path.
+        `layout.layout` already leaves out every node under a folded ancestor, so the canvas
+        code does not filter anything itself.
+  - [x] A fold marker (a circle just outside the box, on the side away from the parent) on
+        every node with at least one child except the root, which would hide the whole map.
+        Empty while unfolded; the hidden-descendant count while folded. Clicking it toggles
+        `node.folded`, lays the map out again and redraws it. Folding state lives only in
+        memory until step 12 wires up saving.
+  - [x] `jiyuu open <file> [--theme <name>]` (`jiyuu/cli.py`). The theme and the file are
+        both read before any window opens; either one failing is reported on the terminal
+        with a non-zero exit, and no window opens. **`.mm` only**: the `.ink` reader is step
+        9, which already lists "the viewer opens `.ink` files" among its own tasks.
+        `formats.read_map(path)` picks the reader by extension, for both `open` and `check`.
+  - [ ] ~~A File → Open file picker (`ft.FilePicker`).~~ **Moved to "Later"**: Flet's
+        `FilePicker` needs Zenity on Linux, which is not installed on the development
+        machine; the user chose command-line opening only for now.
+  - [x] Pan and zoom, with the two issues step 3 deferred resolved by hand (see the
+        findings below): a two-finger move or click-and-drag pans; Ctrl + two-finger
+        vertical move zooms around the pointer, in the direction the user checked; zoom
+        clamped to 25%–400%. Done without `InteractiveViewer` in the end: the view is a
+        `jiyuu.view.View` (offset and scale, plain arithmetic, tested exactly), applied to
+        the map's drawing surface as its `left`, `top` and `scale` in one update per
+        gesture event, from a `GestureDetector`'s `on_scale_update`. Panning is no longer
+        limited to a margin around the map; Escape brings it back.
+  - [x] "Centre on root", bound to Escape: back to 100%, with the root box's centre in the
+        middle of the window. Also done once when the window first opens.
+  - [x] The window title is `"{file name} — jiyuu"`.
+  - [x] Every colour drawn comes from the active `Theme` (step 4.5), selected with
         `jiyuu open --theme <name>`; no colour constant appears in `jiyuu/ui/` itself.
-- Tests: the automated tests in this step cover only the non-UI helpers it adds, if any
-  (e.g. a pure function mapping a file extension to a reader). Everything else is a manual
-  checklist, ticked by the user:
-  - [ ] Every fixture from step 4 opens without a crash.
-  - [ ] Three of the user's own Freeplane maps open and read correctly.
-  - [ ] Folding and unfolding works by clicking the marker.
-  - [ ] Panning and zooming both work, and "centre on root" recovers from being lost.
-  - [ ] The window resizes without the layout breaking.
-- Done when: the manual checklist above is ticked by the user.
+  - [x] The drawing surface only ever grows (`layout.Plane`): folding a branch shrinks the
+        layout, but every remaining box keeps its position on the surface, so the map does
+        not jump on screen when a branch folds.
+  - [x] `scripts/demo_viewer.py` removed: its drawing code is now `jiyuu/ui/canvas.py`.
+- Findings from `scripts/flet_check.py gestures`, run by hand on the user's trackpad (Linux,
+  Wayland, natural scrolling on), which settled the gesture design above:
+  - With `trackpad_scroll_causes_scale=False`, a two-finger move pans, which the user found
+    right; it arrives as `InteractiveViewer` interaction updates with two pointers.
+  - A pinch never changes the reported scale from 1.000 (161 two-pointer updates, all at
+    1.000), so pinch-to-zoom cannot be offered on this platform.
+  - `GestureDetector.on_scroll` received nothing from the trackpad at all, so the zoom
+    direction cannot be fixed by handling scroll events, as step 3 had guessed.
+  - The page-wide keyboard event reports key presses only; `KeyboardListener` reports
+    releases too, which is what tracking Ctrl needs.
+  - `KeyboardListener` is not a layout control: `expand` on it is not honoured, and a map
+    inside it rendered at no visible size until wrapped in an expanding `Container`.
+  - Zoom direction: `zoom(1 + dy * 0.01)`, where `dy` is the two-finger move's vertical
+    distance; the opposite sign, tried first, zoomed the wrong way for the user. With
+    natural scrolling turned off the same gesture reports the opposite sign, so this would
+    feel reversed there; the constant is `ZOOM_PER_PIXEL` in `jiyuu/ui/app.py`.
+  - Zooming around the pointer with `InteractiveViewer` worked but jittered, as the user
+    reported: `InteractiveViewer.zoom()` only scales around its content's top-left corner
+    (read from Flet's own Dart source), so keeping the pointer still took a `zoom()` then a
+    `pan()`, and a frame was drawn between the two. `scripts/flet_check.py transform` set
+    the map's position and scale directly instead, one update per event; the user found it
+    "a lot better", including panning, which now goes through Python on every event.
+- Tests: the automated tests cover the helpers that need no window (`depths`,
+  `descendant_count`, `Plane`, `read_map`, `jiyuu open`'s checks before the window opens)
+  and which controls and colours a map is drawn with (`tests/test_ui.py`, building the
+  controls without opening a window). Everything else is a manual checklist, ticked by the
+  user:
+  - [x] Every fixture from step 4 opens without a crash.
+  - [x] Three of the user's own Freeplane maps open and read correctly.
+  - [x] Folding and unfolding works by clicking the marker.
+  - [x] Panning and zooming both work, and "centre on root" recovers from being lost.
+  - [x] The window resizes without the layout breaking.
+- Done when: the manual checklist above is ticked by the user. **Met**: after the move
+  away from `InteractiveViewer`, the user reported the window "looks perfect"; the user's
+  own maps were opened from outside the repository and none of their content is recorded
+  here. 83 tests pass, 100% coverage of every module except `jiyuu/ui/app.py` (55%: its
+  gesture and key handlers only run in a live window).
 
 ### Step 6: Selection and keyboard navigation
 
@@ -1515,6 +1557,11 @@ Search across nodes; drag-and-drop to move a node; notes, icons, colours, and li
 arbitrary nodes (each needs its `.ink` and `.mm` representation decided before it is built);
 several maps open in tabs; an Android build; merging with inkspire-api (would move
 `jiyuu/formats/ink.py`'s grammar into a package shared by both tools).
+
+An in-app File → Open dialog, deferred from step 5: Flet's `FilePicker` needs Zenity on
+Linux. Either a README note that Zenity must be installed, or a file browser drawn with Flet
+itself, which needs no system dependency. A user setting for the zoom direction, for
+trackpads with natural scrolling turned off (see step 5's findings).
 
 ## Open questions
 

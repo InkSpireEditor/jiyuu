@@ -12,6 +12,10 @@ untested until the viewer and the editor are built on top of them:
     poetry run python scripts/flet_check.py keyboard    # keyboard events; stays open and
                                                          # needs real key presses — close the
                                                          # window when done, or it times out
+    poetry run python scripts/flet_check.py gestures    # pointer gestures; same, but needs a
+                                                         # trackpad or mouse used by hand
+    poetry run python scripts/flet_check.py transform   # pan/zoom without InteractiveViewer;
+                                                         # same, used by hand
 
 `auto` prints one line of results per check to standard output. `keyboard` prints one line
 per key event as it is pressed, each noting whether a `TextField` on the same page had focus
@@ -206,16 +210,227 @@ async def run_keyboard(page: ft.Page) -> None:
     print("D: check ended (window closed or timed out)")
 
 
+async def run_gestures(page: ft.Page) -> None:
+    """Log which events a trackpad's or mouse's gestures actually produce over a map.
+
+    The map is a grid of containers inside an `InteractiveViewer` configured to pan on a
+    trackpad's two-finger scroll (`trackpad_scroll_causes_scale=False`), itself inside a
+    `GestureDetector` whose `on_scroll` sees raw scroll events. Each line printed says which
+    of the two received what, so it can be read off which gestures reach Python at all, and
+    with which sign, before deciding how the viewer maps gestures to panning and zooming.
+    Stays open like `run_keyboard`, for the same reason.
+    """
+    page.title = "jiyuu — flet_check (gestures)"
+    containers: list[ft.Control] = [
+        ft.Container(
+            content=ft.Text(f"Node {i}"),
+            left=(i % 10) * 120,
+            top=(i // 10) * 60,
+            bgcolor=ft.Colors.BLUE_100,
+            padding=8,
+        )
+        for i in range(100)
+    ]
+    stack = ft.Stack(controls=containers, width=10 * 120, height=10 * 60)
+
+    def on_scroll(event: ft.ScrollEvent) -> None:
+        print(f"G scroll: delta=({event.scroll_delta.x:+.1f}, {event.scroll_delta.y:+.1f})", flush=True)
+
+    def on_interaction_start(event: ft.ScaleStartEvent) -> None:
+        print(f"V start: pointers={event.pointer_count}", flush=True)
+
+    ctrl = {"held": False}
+
+    async def on_interaction_update(event: ft.ScaleUpdateEvent) -> None:
+        print(
+            f"V update: pointers={event.pointer_count} scale={event.scale:.3f} "
+            f"focal_delta=({event.focal_point_delta.x:+.1f}, {event.focal_point_delta.y:+.1f}) "
+            f"ctrl={ctrl['held']}",
+            flush=True,
+        )
+        # Ctrl + two-finger vertical move zooms: each pixel moved changes the scale by 1%.
+        # The sign was checked by hand on a trackpad with natural scrolling; the opposite
+        # sign, tried first, zoomed the wrong way there.
+        if ctrl["held"] and event.pointer_count == 2 and event.focal_point_delta.y:
+            await viewer.zoom(1 + event.focal_point_delta.y * 0.01)
+
+    def is_ctrl(key: str) -> bool:
+        return key.startswith("Control")
+
+    def on_key_down(event: ft.KeyDownEvent) -> None:
+        print(f"K down: {event.key!r}", flush=True)
+        if is_ctrl(event.key) and not ctrl["held"]:
+            ctrl["held"] = True
+            viewer.pan_enabled = False
+            viewer.update()
+
+    def on_key_up(event: ft.KeyUpEvent) -> None:
+        print(f"K up: {event.key!r}", flush=True)
+        if is_ctrl(event.key):
+            ctrl["held"] = False
+            viewer.pan_enabled = True
+            viewer.update()
+
+    viewer = ft.InteractiveViewer(
+        content=stack,
+        constrained=False,
+        boundary_margin=ft.Margin.all(2000),
+        trackpad_scroll_causes_scale=False,
+        min_scale=0.25,
+        max_scale=4.0,
+        interaction_update_interval=50,
+        on_interaction_start=on_interaction_start,
+        on_interaction_update=on_interaction_update,
+        on_size_change=lambda event: print(
+            f"S viewer size: {event.width:.0f} x {event.height:.0f}", flush=True
+        ),
+    )
+    closed = {"value": False}
+
+    def on_disconnect(_) -> None:
+        closed["value"] = True
+
+    page.on_disconnect = on_disconnect
+    page.add(
+        ft.Text(
+            "Two-finger move pans. Hold Ctrl and move two fingers up or down to zoom. "
+            "Watch which way it zooms, and whether the map drifts sideways while it does."
+        ),
+        # The Container is what fills the window: KeyboardListener is not a layout control,
+        # so `expand` on it is not honoured, and the map inside it was left with no visible
+        # size at all when it was relied on.
+        ft.Container(
+            expand=True,
+            content=ft.KeyboardListener(
+                content=ft.GestureDetector(content=viewer, on_scroll=on_scroll),
+                autofocus=True,
+                on_key_down=on_key_down,
+                on_key_up=on_key_up,
+            ),
+        ),
+    )
+    page.update()
+
+    waited = 0.0
+    while not closed["value"] and waited < KEYBOARD_CHECK_TIMEOUT:
+        await asyncio.sleep(0.5)
+        waited += 0.5
+    print("check ended (window closed or timed out)")
+
+
+async def run_transform(page: ft.Page) -> None:
+    """Pan and zoom by setting the map's position and scale directly, without
+    `InteractiveViewer`.
+
+    The map is a `Stack` inside another `Stack` that fills the window: its `left`/`top` is
+    the view's offset and its `scale` (around its own top-left corner) is the view's scale,
+    so a content point `p` appears on screen at `offset + scale * p`. A `GestureDetector`'s
+    scale events, which a trackpad's two-finger move and a click-and-drag both produce, set
+    all three together and send them in one update — so a zoom around the pointer, which
+    changes the scale and the offset at once, reaches the screen as one change rather than
+    as two `InteractiveViewer` calls with a frame drawn in between. Stays open like
+    `run_keyboard`.
+    """
+    page.title = "jiyuu — flet_check (transform)"
+    containers: list[ft.Control] = [
+        ft.Container(
+            content=ft.Text(f"Node {i}"),
+            left=(i % 10) * 120,
+            top=(i // 10) * 60,
+            bgcolor=ft.Colors.BLUE_100,
+            padding=8,
+        )
+        for i in range(100)
+    ]
+    view = {"x": 20.0, "y": 20.0, "scale": 1.0}
+    content = ft.Stack(
+        controls=containers,
+        width=10 * 120,
+        height=10 * 60,
+        left=view["x"],
+        top=view["y"],
+        scale=ft.Scale(scale=1.0, alignment=ft.Alignment.TOP_LEFT),
+    )
+    ctrl = {"held": False}
+
+    def apply() -> None:
+        content.left, content.top = view["x"], view["y"]
+        content.scale = ft.Scale(scale=view["scale"], alignment=ft.Alignment.TOP_LEFT)
+        content.update()
+
+    def on_scale_update(event: ft.ScaleUpdateEvent) -> None:
+        if ctrl["held"] and event.pointer_count == 2:
+            # Zoom around the gesture's focal point (the pointer), in window coordinates:
+            # the content point under it stays under it.
+            factor = 1 + event.focal_point_delta.y * 0.01
+            new_scale = min(4.0, max(0.25, view["scale"] * factor))
+            ratio = new_scale / view["scale"]
+            focal = event.local_focal_point
+            view["x"] = focal.x - (focal.x - view["x"]) * ratio
+            view["y"] = focal.y - (focal.y - view["y"]) * ratio
+            view["scale"] = new_scale
+        else:
+            view["x"] += event.focal_point_delta.x
+            view["y"] += event.focal_point_delta.y
+        apply()
+
+    def on_key_down(event: ft.KeyDownEvent) -> None:
+        if event.key.startswith("Control"):
+            ctrl["held"] = True
+
+    def on_key_up(event: ft.KeyUpEvent) -> None:
+        if event.key.startswith("Control"):
+            ctrl["held"] = False
+
+    closed = {"value": False}
+
+    def on_disconnect(_) -> None:
+        closed["value"] = True
+
+    page.on_disconnect = on_disconnect
+    page.add(
+        ft.Text("Two-finger move or click-and-drag pans; Ctrl + two fingers up/down zooms."),
+        ft.Container(
+            expand=True,
+            clip_behavior=ft.ClipBehavior.HARD_EDGE,
+            content=ft.KeyboardListener(
+                autofocus=True,
+                on_key_down=on_key_down,
+                on_key_up=on_key_up,
+                content=ft.GestureDetector(
+                    on_scale_update=on_scale_update,
+                    content=ft.Stack(
+                        controls=[content],
+                        on_size_change=lambda event: print(
+                            f"S view size: {event.width:.0f} x {event.height:.0f}", flush=True
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+    page.update()
+
+    waited = 0.0
+    while not closed["value"] and waited < KEYBOARD_CHECK_TIMEOUT:
+        await asyncio.sleep(0.5)
+        waited += 0.5
+    print("check ended (window closed or timed out)")
+
+
 def main() -> None:
-    """Dispatch to `run_auto` or `run_keyboard` based on the first command-line argument."""
+    """Dispatch to one of the checks above, by the first command-line argument."""
     mode = sys.argv[1] if len(sys.argv) > 1 else "auto"
-    if mode == "auto":
-        ft.run(run_auto)
-    elif mode == "keyboard":
-        ft.run(run_keyboard)
-    else:
-        print(f"unknown mode {mode!r}; use 'auto' or 'keyboard'", file=sys.stderr)
+    runners = {
+        "auto": run_auto,
+        "keyboard": run_keyboard,
+        "gestures": run_gestures,
+        "transform": run_transform,
+    }
+    if mode not in runners:
+        print(f"unknown mode {mode!r}; use one of {', '.join(runners)}", file=sys.stderr)
         sys.exit(1)
+    ft.run(runners[mode])
 
 
 if __name__ == "__main__":
