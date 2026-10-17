@@ -1,0 +1,34 @@
+[project]
+name = "jiyuu"
+version = "0.1.0"
+description = "A FreeMind/Freeplane-compatible mindmap viewer and editor"
+license = "PolyForm-Noncommercial-1.0.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.12,<4.0.0"
+dependencies = [
+    "flet (>=1.0.4,<2.0.0)",
+    "pyyaml (>=6.0.3,<7.0.0)",
+    "defusedxml (>=0.7.1,<0.8.0)",
+    "typer",
+    "pillow",
+]
+
+[project.scripts]
+jiyuu = "jiyuu.cli:app"
+
+[tool.poetry]
+requires-poetry = ">=2.0"
+packages = [{ include = "jiyuu" }]
+
+[tool.poetry.group.dev.dependencies]
+pytest = "*"
+pytest-cov = "^7.1.0"
+pylint = "^4.0.8"
+ty = "^0.0.80"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[build-system]
+requires = ["poetry-core>=2.0"]
+build-backend = "poetry.core.masonry.api"
