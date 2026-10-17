@@ -1,5 +1,6 @@
 """Tests for jiyuu's command-line entry point."""
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -7,6 +8,7 @@ from typer.testing import CliRunner
 
 from jiyuu import __version__
 from jiyuu.cli import app
+from jiyuu.formats import ink
 from jiyuu.model import MindMap
 from jiyuu.theme import DEFAULT_THEME, Theme, load_theme
 
@@ -51,7 +53,17 @@ def test_check_on_an_unknown_file_type_exits_non_zero(tmp_path: Path) -> None:
     assert result.exit_code != 0
 
 
-def test_open_hands_the_map_and_theme_to_the_window(monkeypatch: pytest.MonkeyPatch) -> None:
+def _fixture_copy(tmp_path: Path, name: str) -> Path:
+    """A copy of a `.mm` fixture in `tmp_path`, so that the `.ink` `open` writes beside it
+    lands there rather than in the repository."""
+    copy = tmp_path / name
+    shutil.copyfile(MM_FIXTURES / name, copy)
+    return copy
+
+
+def test_open_hands_the_map_and_theme_to_the_window(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """`jiyuu open` reads the file and the theme, then passes both to the window."""
     opened: dict = {}
 
@@ -59,38 +71,79 @@ def test_open_hands_the_map_and_theme_to_the_window(monkeypatch: pytest.MonkeyPa
         opened.update(root=mindmap.root.text, path=path, theme=theme.name)
 
     monkeypatch.setattr("jiyuu.ui.app.run", fake_run)
-    path = MM_FIXTURES / "worked-example.mm"
+    path = _fixture_copy(tmp_path, "worked-example.mm")
     result = runner.invoke(app, ["open", str(path), "--theme", "solarized-dark"])
 
     assert result.exit_code == 0
     assert opened == {"root": "Project", "path": path, "theme": "Solarized Dark"}
 
 
-def test_open_uses_the_default_theme_when_none_is_given(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_open_uses_the_default_theme_when_none_is_given(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """With no `--theme`, the window gets the default theme."""
     themes: list[str] = []
     monkeypatch.setattr("jiyuu.ui.app.run", lambda mindmap, path, theme: themes.append(theme.name))
-    result = runner.invoke(app, ["open", str(MM_FIXTURES / "worked-example.mm")])
+    result = runner.invoke(app, ["open", str(_fixture_copy(tmp_path, "worked-example.mm"))])
 
     assert result.exit_code == 0
     assert themes == [load_theme(DEFAULT_THEME).name]
 
 
-def test_open_stops_before_any_window_for_an_unknown_theme(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A theme that cannot be loaded exits non-zero, and the window is never opened."""
+def test_open_stops_before_any_window_for_an_unknown_theme(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A theme that cannot be loaded exits non-zero; no window opens and nothing is
+    written."""
     calls: list[object] = []
     monkeypatch.setattr("jiyuu.ui.app.run", lambda *args: calls.append(args))
-    result = runner.invoke(app, ["open", str(MM_FIXTURES / "worked-example.mm"), "--theme", "nope"])
+    path = _fixture_copy(tmp_path, "worked-example.mm")
+    result = runner.invoke(app, ["open", str(path), "--theme", "nope"])
 
     assert result.exit_code != 0
     assert calls == []
+    assert not path.with_suffix(".ink").exists()
 
 
-def test_open_stops_before_any_window_for_an_unreadable_file(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A file that cannot be read into a map exits non-zero, and the window is never opened."""
+def test_open_stops_before_any_window_for_an_unreadable_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A file that cannot be read into a map exits non-zero; no window opens and nothing
+    is written."""
     calls: list[object] = []
     monkeypatch.setattr("jiyuu.ui.app.run", lambda *args: calls.append(args))
-    result = runner.invoke(app, ["open", str(MM_FIXTURES / "malformed.mm")])
+    path = _fixture_copy(tmp_path, "malformed.mm")
+    result = runner.invoke(app, ["open", str(path)])
 
     assert result.exit_code != 0
     assert calls == []
+    assert not path.with_suffix(".ink").exists()
+
+
+def test_open_writes_the_map_as_ink_beside_it(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Opening `worked-example.mm` writes `worked-example.ink` next to it, holding the same
+    tree as an indented list, and leaves the `.mm` exactly as it was."""
+    monkeypatch.setattr("jiyuu.ui.app.run", lambda *args: None)
+    path = _fixture_copy(tmp_path, "worked-example.mm")
+    original = path.read_bytes()
+    result = runner.invoke(app, ["open", str(path)])
+
+    assert result.exit_code == 0
+    assert path.read_bytes() == original
+    written = ink.parse(path.with_suffix(".ink").read_text(encoding="utf-8"))
+    assert written.metadata == {"kind": "mindmap"}
+    assert written.body == "- Project\n  - Goals\n    - I/O\n  - Risks\n    - Flet performance\n"
+
+
+def test_open_never_overwrites_an_existing_ink(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A `.ink` already beside the `.mm` is left untouched, and the window still opens."""
+    calls: list[object] = []
+    monkeypatch.setattr("jiyuu.ui.app.run", lambda *args: calls.append(args))
+    path = _fixture_copy(tmp_path, "worked-example.mm")
+    existing = path.with_suffix(".ink")
+    existing.write_text("- edited by hand\n", encoding="utf-8")
+    result = runner.invoke(app, ["open", str(path)])
+
+    assert result.exit_code == 0
+    assert existing.read_text(encoding="utf-8") == "- edited by hand\n"
+    assert len(calls) == 1

@@ -1210,7 +1210,7 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
 
 ### Step 7: `.ink` grammar
 
-- [ ] Status: `todo`
+- [x] Status: `done`
 - Depends on: 0.
 - ABNF (adapted from inkspire-api's `docs/ink-format.md` at `01bc14a`, same grammar, copied
   here so this step has no external dependency to resolve):
@@ -1227,33 +1227,54 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
   ```
 
 - Tasks:
-  - [ ] Copy the grammar part of inkspire-api's `inkspire_api/ink.py` at commit `01bc14a`
+  - [x] Copy the grammar part of inkspire-api's `inkspire_api/ink.py` at commit `01bc14a`
         into `jiyuu/formats/ink.py`: `SUFFIX`, `FENCE`, `FENCE_PREFIX`, `SECTION_META`,
         `MAX_NAME_LENGTH`, `NAME_CHARACTERS`, `MAX_HEADER_BYTES`, `ERROR`, `WARNING`,
         `Document`, `Problem`, `_Section`, `fence_line`, `section_name`, `_read`,
         `_mapping`, `parse`, `render`, `read_header`, `check` and their private helpers; and
         `dump_yaml` from `inkspire_api/fs.py`.
-  - [ ] jiyuu's own section names replace inkspire's: `SECTION_BODY = "body"` (kept, same
+  - [x] jiyuu's own section names replace inkspire's: `SECTION_BODY = "body"` (kept, same
         meaning), `SECTION_NODES = "nodes"` (new — jiyuu's own), and
         `KNOWN_SECTIONS = (SECTION_META, SECTION_BODY, SECTION_NODES)`.
-  - [ ] Drop everything specific to inkspire's own section set and header fields:
+  - [x] Drop everything specific to inkspire's own section set and header fields:
         `SECTION_PROVENANCE`, `SECTION_CONTEXT_SUMMARY`, `KNOWN_KEYS`, `header_fields`,
         `with_header`, `render_with`, `display_name`, and the header-field-specific checks
         inside `check` (title/status/summary validation) — jiyuu's own meta key, `kind`, is
         validated in step 9, not here.
-  - [ ] The module's docstring describes the grammar fully and self-containedly (the shape,
+  - [x] The module's docstring describes the grammar fully and self-containedly (the shape,
         the fence rule, section ordering, what is preserved verbatim on a round trip), and
         separately credits its origin with an actual link: inkspire-api
         (https://github.com/InkSpireEditor/inkspire-api), `inkspire_api/ink.py`, commit
         `01bc14a`, and the differences from it listed above.
-  - [ ] Copy inkspire-api's matching tests (`tests/test_ink.py` or equivalent) and adapt
+  - [x] Copy inkspire-api's matching tests (`tests/test_ink.py` or equivalent) and adapt
         them to jiyuu's section names.
 - Tests:
-  - [ ] The copied/adapted tests pass.
-  - [ ] `render(parse(x))` is byte-identical to `x` for every valid fixture file.
-  - [ ] A fence line is recognised only with exactly five `=` characters — four or six do
+  - [x] The copied/adapted tests pass.
+  - [x] `render(parse(x))` is byte-identical to `x` for every valid fixture file.
+  - [x] A fence line is recognised only with exactly five `=` characters — four or six do
         not open a section.
-- Done when: the tests above pass.
+- Done when: the tests above pass. **Met**: 67 tests in `tests/test_ink.py` pass, 100%
+  coverage of `jiyuu/formats/ink.py`. inkspire-api's `origin/main` was fetched first and was
+  still `01bc14a`, so nothing newer was left out. As built, compared with the tasks above:
+  - `check` keeps inkspire's checks that `meta` is YAML and is a mapping, and drops the
+    title/status/summary checks and the unknown-key warning, which belong to inkspire's own
+    header fields; `_key_line`, used only by those, went with them.
+  - Messages say "body" or "text" where inkspire's say "prose", and the "`meta` must come
+    first" message no longer mentions inkspire's tree listing. The module docstring lists
+    every difference.
+  - The copied tests use jiyuu's placeholder text (`Project`, `Goals`) instead of
+    inkspire's test prose, whose origin was not known, per the rule on real content.
+    Tests of the parts not copied (`display_name`, `with_header`, `render_with`, the
+    provenance and context-summary sections, the header-field checks) were dropped.
+  - `tests/data/ink/` was added (the worked example, a plain body, an unknown section) for
+    the byte-for-byte round-trip test, since there were no `.ink` fixtures before.
+  - Wired into the app in the same step, at the user's request, so that no code is
+    committed that nothing uses or that cannot be tried by hand: `jiyuu open <map.mm>`
+    now also writes `<map>.ink` beside it, through `ink.render`. It never overwrites an
+    existing `.ink` (which may hold edits made since), never touches the `.mm`, and writes
+    atomically (`formats.write_text_atomically`). Writing the body needed step 8's writer
+    (`jiyuu/formats/body.py`, `write`), brought forward; `ink:nodes` (folding, sides) is
+    not written until step 9.
 
 ### Step 8: Body reader and writer
 
@@ -1261,7 +1282,8 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
 - Depends on: 2, 7.
 - Tasks:
   - [ ] `jiyuu/formats/body.py`: `read(body: str) -> tuple[Node | None, list[Problem]]` and
-        `write(root: Node) -> str`, implementing exactly the algorithms given under
+        `write(root: Node) -> str` (`write` already done in step 7, tested in
+        `tests/test_body.py`; only `read` remains), implementing exactly the algorithms given under
         "`ink:body` — reading" and "— writing" above (this step is where those two code
         blocks actually live; nothing new to design here, only to type in and test).
   - [ ] `tests/data/bodies.json`, with entries at least as detailed as:
@@ -1345,6 +1367,11 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
   - [ ] `jiyuu check <file.ink>`: run `load`, print every `Problem` as
         `path:line: level: message`, exit non-zero if any is an error.
   - [ ] The viewer (step 5) opens `.ink` files through `mapfile.load`.
+  - [ ] The `.ink` written beside an opened `.mm` (step 7) goes through `mapfile.dump`, so
+        it gains its `ink:nodes` section. Opening a `.ink` itself writes nothing.
+  - [ ] Hand check: open one of the user's own `.mm` maps, edit the `.ink` written beside
+        it in a text editor (rename a node, move a branch, fold one with `folded: "true"`),
+        open the `.ink`, and see the edits in the window.
 - Tests:
   - [ ] Round-tripping a fixture file through `load` then `dump` reproduces it byte for
         byte.
@@ -1495,8 +1522,9 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
         timer rather than queuing another save), and once more, synchronously, on window
         close if `dirty` is still `True`.
   - [ ] Opening a `.mm` file creates a `Document` whose `path` is `<stem>.ink` (never the
-        `.mm` path itself); if `<stem>.ink` already exists, prompt for a different name
-        before the first autosave can fire, rather than silently picking one.
+        `.mm` path itself). Since step 7, that file is already written when the `.mm`
+        opens, unless it existed; in that case, prompt for a different name before the
+        first autosave can fire, rather than silently picking one.
   - [ ] The conflict banner offers exactly two actions, matching the diagram: "reload"
         (re-`load`s `path`, replacing the in-memory tree, clears `conflicted`) and "keep
         mine" (writes the in-memory tree to `<stem>.conflict.ink`, leaves `path` and
