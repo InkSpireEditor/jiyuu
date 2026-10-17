@@ -22,4 +22,9 @@ max-args=12
 max-attributes=20
 
 [MESSAGES CONTROL]
-disable=C0301,W0603,W1203,C0103,C1803,R1705,R1720
+# E1123/E1121 (unexpected-keyword-arg, too-many-function-args) are disabled because
+# astroid cannot infer that Flet's `@control`-decorated classes (flet.controls.base_control)
+# behave like dataclasses: even `flet.Text("hi", size=16)`, with no other code around it,
+# triggers both on every argument. `ty check`, run alongside pylint on every change, does
+# infer this correctly and catches a real wrong-argument mistake in a Flet control call.
+disable=C0301,W0603,W1203,C0103,C1803,R1705,R1720,E1123,E1121

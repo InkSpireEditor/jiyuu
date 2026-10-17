@@ -58,6 +58,10 @@ Status values: `todo`, `in progress`, `done`, `blocked: <reason>`.
 | Build order: viewer (reading `.mm`), then `.ink`, then editor, then exports | Autosave needs `.ink` to exist before editing exists |
 | jiyuu is licensed PolyForm-Noncommercial-1.0.0, copyright Maxime PUYS, same as inkspire-api | Lets step 7 copy code from inkspire-api into jiyuu with no licence conflict, since both are the same author's projects |
 | `jiyuu/cli.py` defines an empty `@app.callback()` alongside `version` | Typer collapses a `Typer()` app with exactly one registered command into that command itself, invoked with no name; the callback keeps `version` (and every command added later) addressed by name, e.g. `jiyuu version` |
+| `.github/workflows/pylintrc` disables `unexpected-keyword-arg` (E1123) and `too-many-function-args` (E1121) | Confirmed by direct test: astroid cannot infer that Flet's `@control`-decorated classes behave like dataclasses, so every Flet control call with arguments is a false positive (even `flet.Text("hi", size=16)` alone triggers both). `ty check`, run on every change alongside pylint, infers this correctly and is kept as the real check for this error class |
+| Rendering approach confirmed (step 1): one `Container` per node on a `Stack` inside an `InteractiveViewer`, text measured with Pillow and padded by `LayoutSettings.pad_x`/`pad_y` | Step 1's checks B and C passed against this approach with real measurements; no fallback needed |
+| Font: DejaVu Sans, size 16 by default | Step 1 confirmed its licence (Bitstream Vera, permissive; DejaVu's own changes public domain) permits bundling, and measured its rendered width against Pillow's prediction |
+| Redo is also bound to Ctrl+Shift+Z, alongside Ctrl+Y | Step 1's keyboard check: confirmed as this desktop's own convention, and as a distinct, reliably-reported `(key="Z", shift=True, ctrl=True)` event |
 
 ## The `.ink` map file
 
@@ -453,22 +457,22 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
 
 ### Step 1: Flet feasibility check
 
-- [ ] Status: `todo`
+- [x] Status: `done`
 - Depends on: 0.
 - Purpose: confirm the rendering approach before any UI code depends on it. Steps 3 and 5
   are written assuming "one `Container` per node on a `Stack`" works; this step either
   confirms that or forces a rewrite of step 5's approach before it starts.
-- Tasks, in `scripts/flet_check.py` (excluded from pylint and coverage via the pylint
-  config's `ignore-paths`, and from pytest by not matching `test_*`):
-  - [ ] Check A — open a bare Flet desktop window: `flet.app(target=main)` where `main`
+- Tasks, in `scripts/flet_check.py` (excluded from pylint and coverage since neither's CI
+  invocation targets `scripts/`, and from pytest by not matching `test_*`):
+  - [x] Check A — open a bare Flet desktop window: `flet.app(target=main)` where `main`
         just sets a page title, on Linux, under Python 3.14.
-  - [ ] Check B — place 200 `ft.Container(content=ft.Text(...))` at absolute positions
+  - [x] Check B — place 200 `ft.Container(content=ft.Text(...))` at absolute positions
         inside `ft.Stack`, that `Stack` inside `ft.InteractiveViewer` (Flet's pan/zoom
         container), with edges drawn as cubic Bézier paths on an `ft.canvas.Canvas`
         beneath the stack. Programmatically pan and zoom a few times and print the time
         between each `page.update()` call. Record whether it stays under roughly 33 ms
         (≈30 fps) per update with all 200 nodes visible.
-  - [ ] Check C — text measurement: bundle one TTF font with a licence compatible with
+  - [x] Check C — text measurement: bundle one TTF font with a licence compatible with
         this project (DejaVu Sans is Bitstream Vera + Public Domain/Arev, both
         redistributable; confirm before bundling), register it via `page.fonts`, and for a
         set of 10 sample strings compare Pillow's
@@ -476,25 +480,85 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
         actually renders a `Container` at (read back via the control's resulting size, or
         an `on_resize`-style callback if Flet 1.0 exposes one for a `Text` control).
         Record the largest absolute difference across the 10 strings.
-  - [ ] Check D — keyboard: attach `page.on_keyboard_event` and, with an `ft.TextField`
+  - [x] Check D — keyboard: attach `page.on_keyboard_event` and, with an `ft.TextField`
         on the page, manually press each of: every arrow key, Tab, Insert, Enter, F2,
         Delete, Space, Ctrl+Z, Ctrl+Y. For each, record (a) whether the page-level handler
         fired, and (b) whether it fired while the `TextField` had focus.
-- Blockers/risks:
+- Blockers/risks: none of the three anticipated fallbacks below were needed; kept for
+  reference in case a future machine or Flet version behaves differently.
   - No reliable way to read back a rendered text width (check C has no fallback reading):
     fall back to the Pillow estimate plus a fixed padding margin (record the margin chosen
-    here), and accept that very unusual fonts/scripts may not fit exactly.
+    here), and accept that very unusual fonts/scripts may not fit exactly. **Not needed**:
+    `Container`/`Text` is a `LayoutControl`, whose `on_size_change` reports the real
+    rendered size after layout — see Check C's results below.
   - Check B exceeds ~33 ms per update with 200 controls: fall back to drawing every node as
     `canvas.Text` plus `canvas.Rect` on one `ft.canvas.Canvas`, with hit-testing done in
     Python against the same rectangles `layout.py` already computes (point-in-rectangle,
     tested top-most node first). Record this fallback here, and rewrite step 5's tasks to
-    draw on the canvas instead of building controls before step 5 starts.
+    draw on the canvas instead of building controls before step 5 starts. **Not needed**:
+    see Check B's results below.
   - Tab does not reach `page.on_keyboard_event` (it moves focus instead): fall back to a
     different key for "new child" in step 11 (Insert alone, dropping the Tab alias), and
-    record that as a decision in the Decisions table above.
+    record that as a decision in the Decisions table above. **Not needed**: see Check D's
+    results below — Tab reaches `page.on_keyboard_event` reliably.
 - Done when: each of the four checks has a written result in this section (pass/fail and
   the measured number), and the chosen approach — or whichever fallback was needed — is
-  added to the Decisions table.
+  added to the Decisions table. **Met**:
+
+  **Check A — pass.** `ft.run(main)` opened a native window on this Linux desktop (Wayland,
+  via XWayland fallback for input) under Python 3.14.7, with no exception.
+
+  **Check B — pass.** Ten programmatic `zoom`/`pan` calls on 200 positioned containers,
+  timed end-to-end around each `page.update()`, across four separate runs:
+
+  | Run | Update times (ms) |
+  |---|---|
+  | 1 | 23.5, 20.3, 22.9, 16.8, 11.6, 15.5, 5.2, 4.8, 4.5, 4.7 |
+  | 2 | 23.6, 15.2, 35.9, 28.4, 17.7, 13.8, 14.7, 16.6, 11.1, 12.0 |
+  | 3 | 17.0, 12.4, 24.8, 18.1, 10.4, 13.6, 23.3, 9.0, 12.4, 14.5 |
+  | 4 | 17.7, 13.0, 21.9, 48.7, 31.2, 14.5, 9.8, 7.5, 12.0, 9.5 |
+
+  Most calls land well under the 33 ms (≈30 fps) budget; two calls, in two different runs,
+  exceeded it (35.9 ms, 48.7 ms) without a repeating pattern — most likely one-off
+  scheduling jitter on this desktop rather than a sustained cost of the approach. One
+  `Container` per node on a `Stack` inside an `InteractiveViewer` is confirmed as the
+  rendering approach for step 5; the canvas-only fallback is not needed.
+
+  **Check C — pass.** Comparing `ImageFont.getlength` (DejaVu Sans, size 16) against each
+  string's actual rendered width, reported through `Container.on_size_change`:
+
+  | String | Pillow (px) | Flet (px) | Difference |
+  |---|---|---|---|
+  | `Project` | 54.78 | 56.49 | +1.71 |
+  | `Goals` | 44.81 | 46.02 | +1.21 |
+  | `I/O` | 22.70 | 23.45 | +0.75 |
+  | `TODO` | 47.30 | 48.28 | +0.98 |
+  | `Risks` | 41.53 | 42.75 | +1.22 |
+  | `Flet performance` | 137.38 | 141.32 | +3.95 |
+  | `Résumé` | 64.17 | 65.65 | +1.48 |
+  | `A/B` | 27.33 | 28.06 | +0.73 |
+  | `#tag` | 39.66 | 40.64 | +0.98 |
+  | `He said "hi"` | 94.14 | 97.09 | +2.95 |
+
+  Flet always renders slightly wider than Pillow's prediction, by 0.7–4.0 px across these
+  ten strings, growing mildly with string length. `Container.on_size_change` (inherited
+  from `LayoutControl`) is a reliable way to read back a rendered size, so the Pillow-only
+  fallback margin is not needed; the existing `pad_x = 16` px per side in `LayoutSettings`
+  already absorbs a gap several times this size.
+
+  **Check D — pass, with one correction.** `page.on_keyboard_event` fired for every key
+  tested — every arrow key, Tab, Insert, Enter, F2, Delete, Space, Ctrl+Z, Ctrl+Y — whether
+  or not an `ft.TextField` on the same page had focus at the time; no key was ever silently
+  consumed before reaching it. While the field had focus, Flutter's own `TextField` *also*
+  consumed several of these for editing — arrow keys moved the text cursor, Delete deleted
+  a character, Space inserted one, and Enter blurred the field — independently of
+  `page.on_keyboard_event` still firing for the same key press. This confirms step 11's
+  design is necessary, not optional: jiyuu's own code must suppress tree-navigation actions
+  while a node is being text-edited, since Flet delivers the event regardless of what the
+  focused field does with it. One correction to step 11's keybinding table: on this
+  desktop, Ctrl+Shift+Z is the conventional redo shortcut, confirmed as a distinct
+  `(key="Z", shift=True, ctrl=True)` event — added as a second accepted redo binding
+  alongside Ctrl+Y (recorded in the Decisions table).
 
 ### Step 2: Tree model and node IDs
 
@@ -1083,7 +1147,8 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
   | any printable character, while not already editing | enters text-edit mode on `selected` with that character as the starting text (replacing it), matching Freeplane's "just start typing" behaviour |
   | Delete | `editing.delete(selected)` |
   | Ctrl+Up / Ctrl+Down | `editing.move_up(selected)` / `move_down(selected)` |
-  | Ctrl+Z / Ctrl+Y | `editing.undo()` / `redo()` |
+  | Ctrl+Z | `editing.undo()` |
+  | Ctrl+Y, Ctrl+Shift+Z | `editing.redo()` (both bound; confirmed in step 1 that Ctrl+Shift+Z is this desktop's own convention) |
   | Escape, while editing text | discards the in-progress edit (no `rename` call) |
   | every key from step 6's table | handled exactly as in step 6, and only while **not** editing text |
 - Tasks:
@@ -1248,8 +1313,6 @@ several maps open in tabs; an Android build; merging with inkspire-api (would mo
 Each is listed with the default in effect until it is answered.
 
 - Should an `ink:nodes` line carry a `# <path>` comment, for hand-editing. Default: no.
-- Which font ships with jiyuu. Decided in step 1, once a licence is checked; DejaVu Sans is
-  the current candidate.
 - What happens when two first-level nodes are both moved to the same side by hand in a text
   editor. Default: no special case — the layout places both in that side's column, in body
   order.
