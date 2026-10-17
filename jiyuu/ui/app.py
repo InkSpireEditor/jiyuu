@@ -4,13 +4,17 @@ Gestures, as they reach this window from a trackpad on Linux:
 
 - a two-finger move, or a click-and-drag, pans;
 - Ctrl held during a two-finger vertical move zooms instead, around the pointer;
-- Escape puts the root back in the middle of the window at 100%.
+- Escape selects the root and puts it back in the middle of the window at 100%;
+- the arrow keys move the selection (see `jiyuu.navigation`), Space folds or unfolds the
+  selected node, and clicking a node selects it; the view pans just enough to keep the
+  selected node in the window.
 
-All three change a `View` (an offset and a scale, see `jiyuu.view`), which is then applied
-to the map's drawing surface as its `left`, `top` and `scale` in a single update. Flet's
-`InteractiveViewer` was used for this first; it was replaced because it can only zoom around
-its content's top-left corner, so zooming around the pointer took a zoom call and then a
-pan call, and the frame drawn between the two made zooming visibly jitter.
+Panning, zooming and Escape change a `View` (an offset and a scale, see `jiyuu.view`),
+which is then applied to the map's drawing surface as its `left`, `top` and `scale` in a
+single update. Flet's `InteractiveViewer` was used for this first; it was replaced because
+it can only zoom around its content's top-left corner, so zooming around the pointer took a
+zoom call and then a pan call, and the frame drawn between the two made zooming visibly
+jitter.
 
 A trackpad pinch is not offered: on the Linux desktop this runs on, it reaches Flet as a
 two-finger move whose scale stays at 1, so it cannot be told apart from a pan. Ctrl is
@@ -27,6 +31,7 @@ import flet as ft
 from ..layout import Edge, LayoutSettings, Plane, Rect, layout
 from ..measure import DEFAULT_FONT_PATH, PillowMeasurer
 from ..model import MindMap, Node, depths
+from ..navigation import DOWN, HOME, LEFT, RIGHT, UP, Navigator, is_inside
 from ..theme import Theme
 from ..view import View
 from .canvas import FONT_FAMILY, map_controls
@@ -38,6 +43,16 @@ from .canvas import FONT_FAMILY, map_controls
 ZOOM_PER_PIXEL = 0.01
 #: Blank space kept around the map on its drawing surface.
 MARGIN = 40.0
+#: How close to the window's edge the selected node may get before the view pans to keep
+#: it in, in window pixels.
+REVEAL_MARGIN = 24.0
+#: Keys, as Flet names them, that move the selection, and the move each one makes.
+NAVIGATION_KEYS = {
+    "Arrow Right": RIGHT,
+    "Arrow Left": LEFT,
+    "Arrow Up": UP,
+    "Arrow Down": DOWN,
+}
 
 
 class MapWindow:
@@ -57,6 +72,8 @@ class MapWindow:
         #: The window area the map is shown in, once its size is known.
         self.window_size: tuple[float, float] | None = None
         self.ctrl_held = False
+        self.navigator = Navigator(mindmap.root)
+        self.selected = mindmap.root
         #: The map's drawing surface. Its `left`, `top` and `scale` are the view.
         self.surface = ft.Stack()
 
@@ -71,6 +88,7 @@ class MapWindow:
             content=ft.KeyboardListener(
                 autofocus=True,
                 on_key_down=self._on_key_down,
+                on_key_repeat=self._on_key_repeat,
                 on_key_up=self._on_key_up,
                 content=ft.GestureDetector(
                     on_scale_update=self._on_scale_update,
@@ -97,6 +115,8 @@ class MapWindow:
             settings=self.settings,
             size=(self.plane.width, self.plane.height),
             on_toggle_fold=self.toggle_fold,
+            selected=self.selected,
+            on_select=self.select,
         )
         self.apply_view()
 
@@ -106,9 +126,27 @@ class MapWindow:
         self.surface.scale = ft.Scale(scale=self.view.scale, alignment=ft.Alignment.TOP_LEFT)
 
     def toggle_fold(self, node: Node) -> None:
-        """Folds `node` if it is unfolded, unfolds it otherwise, and redraws the map."""
+        """Folds `node` if it is unfolded, unfolds it otherwise, and redraws the map.
+
+        A node with no children, or the root, is left alone. Folding a node the selection
+        is inside moves the selection up to that node, since the selected one is no longer
+        shown.
+        """
+        if not node.children or node is self.mindmap.root:
+            return
         node.folded = not node.folded
+        if node.folded and is_inside(self.selected, node):
+            self.selected = node
         self.redraw()
+        self.surface.update()
+
+    def select(self, node: Node) -> None:
+        """Selects `node`, redraws, and pans just enough to keep it in the window."""
+        self.selected = node
+        self.redraw()
+        if self.window_size is not None:
+            self.view.reveal(self.rects[node], *self.window_size, REVEAL_MARGIN)
+            self.apply_view()
         self.surface.update()
 
     def centre_on_root(self) -> None:
@@ -143,7 +181,24 @@ class MapWindow:
         if event.key.startswith("Control"):
             self.ctrl_held = True
         elif event.key == "Escape":
+            self.selected = self.navigator.move(self.selected, HOME)
+            self.redraw()
             self.centre_on_root()
+        else:
+            self._on_command_key(event.key)
+
+    def _on_key_repeat(self, event: ft.KeyRepeatEvent) -> None:
+        # Holding an arrow key keeps moving; holding Space does not keep refolding.
+        if event.key in NAVIGATION_KEYS:
+            self._on_command_key(event.key)
+
+    def _on_command_key(self, key: str) -> None:
+        if key in NAVIGATION_KEYS:
+            target = self.navigator.move(self.selected, NAVIGATION_KEYS[key])
+            if target is not self.selected:
+                self.select(target)
+        elif key == " ":
+            self.toggle_fold(self.selected)
 
     def _on_key_up(self, event: ft.KeyUpEvent) -> None:
         if event.key.startswith("Control"):

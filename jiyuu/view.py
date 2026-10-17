@@ -44,6 +44,23 @@ class View:
         self.y = wy - (wy - self.y) * ratio
         self.scale = scale
 
+    def reveal(self, rect: Rect, window_width: float, window_height: float, margin: float) -> None:
+        """Pans just enough for `rect` (in content coordinates) to be inside the window with
+        `margin` to spare, and not at all if it already is. Where `rect` is too big to fit,
+        its top-left corner is the part kept in view."""
+        left, top = self.to_window(rect.x, rect.y)
+        right, bottom = left + rect.width * self.scale, top + rect.height * self.scale
+        dx = dy = 0.0
+        if right > window_width - margin:
+            dx = window_width - margin - right
+        if left + dx < margin:
+            dx = margin - left
+        if bottom > window_height - margin:
+            dy = window_height - margin - bottom
+        if top + dy < margin:
+            dy = margin - top
+        self.pan(dx, dy)
+
     def centre_on(self, rect: Rect, window_width: float, window_height: float) -> None:
         """Back to a scale of 1, with the centre of `rect` (in content coordinates) in the
         middle of a window of the given size."""

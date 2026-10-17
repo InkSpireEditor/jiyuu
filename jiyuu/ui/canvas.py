@@ -49,9 +49,18 @@ def edge_path(edge: Edge, rects: dict[Node, Rect], settings: LayoutSettings, col
     )
 
 
-def node_box(node: Node, rect: Rect, depth: int, theme: Theme) -> ft.Container:
-    """A node's box, with its text centred, in its depth's colours from `theme`."""
-    colors = theme.for_depth(depth)
+def node_box(
+    node: Node,
+    rect: Rect,
+    depth: int,
+    theme: Theme,
+    *,
+    selected: bool = False,
+    on_click: Callable[[], None] | None = None,
+) -> ft.Container:
+    """A node's box, with its text centred, in its depth's colours from `theme` — or in the
+    theme's selection colours if it is the selected node."""
+    colors = theme.selection if selected else theme.for_depth(depth)
     return ft.Container(
         content=ft.Text(node.text, font_family=FONT_FAMILY, size=DEFAULT_FONT_SIZE, color=colors.text),
         left=rect.x,
@@ -62,6 +71,7 @@ def node_box(node: Node, rect: Rect, depth: int, theme: Theme) -> ft.Container:
         border=ft.Border.all(1, theme.edge),
         border_radius=CORNER_RADIUS,
         alignment=ft.Alignment.CENTER,
+        on_click=(lambda _: on_click()) if on_click is not None else None,
     )
 
 
@@ -96,13 +106,16 @@ def map_controls(
     settings: LayoutSettings,
     size: tuple[float, float],
     on_toggle_fold: Callable[[Node], None],
+    selected: Node | None = None,
+    on_select: Callable[[Node], None] | None = None,
 ) -> list[ft.Control]:
     """Every control the map is drawn with, bottom to top: the edges' canvas, then each
     node's box, then each fold marker.
 
     `rects` must already be placed on the drawing surface (see `layout.Plane`); `size` is
     that surface's width and height. The root gets no fold marker: folding it would hide
-    the whole map.
+    the whole map. `selected` is drawn in the theme's selection colours; clicking any box
+    calls `on_select` with its node.
     """
     sides = {edge.child: edge.side for edge in edges}
     canvas = cv.Canvas(
@@ -110,7 +123,17 @@ def map_controls(
         width=size[0],
         height=size[1],
     )
-    boxes = [node_box(node, rect, depths[node], theme) for node, rect in rects.items()]
+    boxes = [
+        node_box(
+            node,
+            rect,
+            depths[node],
+            theme,
+            selected=node is selected,
+            on_click=(lambda node=node: on_select(node)) if on_select is not None else None,
+        )
+        for node, rect in rects.items()
+    ]
     markers = [
         fold_marker(node, rect, sides[node], theme, lambda node=node: on_toggle_fold(node))
         for node, rect in rects.items()

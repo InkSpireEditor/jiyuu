@@ -27,9 +27,12 @@ In the window:
 | Action | Does |
 |---|---|
 | Two-finger move, or click and drag | Pan |
+| Arrow keys | Move the selection |
+| Space | Fold or unfold the selected node |
+| Click a node | Select it |
 | Ctrl + two-finger move up or down | Zoom |
 | Click the circle beside a node | Fold or unfold its branch; a folded branch's circle shows how many nodes it hides |
-| Escape | Back to 100%, with the root in the middle of the window |
+| Escape | Select the root, and go back to 100% with it in the middle of the window |
 
 ## Development
 

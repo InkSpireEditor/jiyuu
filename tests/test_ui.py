@@ -96,3 +96,91 @@ def test_window_redraw_fills_the_surface_with_the_map_at_the_view() -> None:
     assert (window.surface.left, window.surface.top) == (30.0, -10.0)
     assert cast(ft.Scale, window.surface.scale).scale == 2.0
     assert root in window.rects
+
+
+class _Key:
+    """Stands in for a key event: only its `key` is read."""
+
+    def __init__(self, key: str) -> None:
+        self.key = key
+
+
+def _window(root: Node) -> MapWindow:
+    """A window over `root`, laid out, at a known size, that never sends anything to a
+    screen."""
+    window = MapWindow(cast(ft.Page, None), MindMap(root=root), THEME)
+    setattr(window.surface, "update", lambda: None)
+    window.redraw()
+    window.window_size = (800.0, 600.0)
+    return window
+
+
+def _press(window: MapWindow, key: str) -> None:
+    window._on_key_down(cast(ft.KeyDownEvent, _Key(key)))  # pylint: disable=protected-access
+
+
+def _box_of(window: MapWindow, node: Node) -> ft.Container:
+    """The drawn box for `node`: the first control at its rect's position."""
+    rect = window.rects[node]
+    boxes = (cast(ft.Container, control) for control in window.surface.controls[1:])
+    return next(box for box in boxes if (box.left, box.top) == (rect.x, rect.y))
+
+
+def test_arrow_keys_move_the_selection_and_its_colours() -> None:
+    """Right from the root selects into the right side; the new selection is drawn in the
+    theme's selection colours and the old one is not any more."""
+    root, goals, _ = _tree()
+    window = _window(root)
+    _press(window, "Arrow Right")
+
+    assert window.selected is goals
+    assert _box_of(window, goals).bgcolor == THEME.selection.background
+    assert _box_of(window, root).bgcolor == THEME.root.background
+
+
+def test_escape_selects_the_root_and_centres_on_it() -> None:
+    """Escape, from anywhere, selects the root and puts it in the middle of the window at
+    100%."""
+    root, goals, _ = _tree()
+    window = _window(root)
+    window.select(goals.children[0])
+    window.view.zoom_at(0.0, 0.0, 2.0)
+    _press(window, "Escape")
+
+    rect = window.rects[root]
+    assert window.selected is root
+    assert window.view.scale == 1.0
+    assert window.view.to_window(rect.x + rect.width / 2, rect.y + rect.height / 2) == (400.0, 300.0)
+
+
+def test_space_folds_and_unfolds_the_selected_node() -> None:
+    """Space toggles the selected node's fold, and the selection stays on it."""
+    root, goals, _ = _tree()
+    window = _window(root)
+    window.select(goals)
+    _press(window, " ")
+    assert goals.folded and window.selected is goals
+    _press(window, " ")
+    assert not goals.folded
+
+
+def test_folding_over_the_selection_moves_it_to_the_folded_node() -> None:
+    """Folding an ancestor of the selected node (by its marker) selects that ancestor,
+    since the node that was selected is no longer shown."""
+    root, goals, _ = _tree()
+    window = _window(root)
+    window.select(goals.children[1])
+    window.toggle_fold(goals)
+    assert window.selected is goals
+
+
+def test_selecting_an_off_screen_node_pans_it_into_view() -> None:
+    """A node outside the window is brought inside it when selected."""
+    root, goals, _ = _tree()
+    window = _window(root)
+    window.view.pan(-5000.0, 0.0)
+    window.select(goals)
+
+    rect = window.rects[goals]
+    left, _ = window.view.to_window(rect.x, rect.y)
+    assert 0 <= left <= 800.0

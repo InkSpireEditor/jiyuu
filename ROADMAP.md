@@ -68,6 +68,7 @@ Status values: `todo`, `in progress`, `done`, `blocked: <reason>`.
 | Theme contrast floor is 3.0 (WCAG AA large text / non-text), not 4.5 | Several palette colours cannot reach 4.5 against any text colour in their own palette; replacing them would no longer be the palette |
 | Themes are step 4.5, before the viewer, not 5.5 after it | Theme loading has no Flet dependency, and the viewer can be built on it from the start instead of being refactored afterwards |
 | Zoom is Ctrl + two-finger vertical move; a two-finger move or click-and-drag pans; no pinch | Pinch reaches Flet with a scale stuck at 1.0 on this Linux platform, and trackpad scrolling never reaches `on_scroll`; tested by hand in step 5 |
+| Escape selects the root as well as centring on it; Home is not bound | The user's keyboard has no Home key; Escape already centred on the root |
 | Maps open from the command line only (`jiyuu open <file>`); no in-app File → Open yet | Flet's `FilePicker` needs Zenity on Linux, not installed here; the user chose to defer it |
 | `InteractiveViewer` needs `constrained=False` and a large `boundary_margin` to pan at all around content bigger than the viewport, and `trackpad_scroll_causes_scale=True` so a trackpad's scroll zooms (matching FreeMind) rather than pans | Found by hand in step 3's demo viewer; step 1's check B never exercised real pointer gestures, only the programmatic `.pan`/`.zoom` calls, so this went unnoticed until something used it interactively (step 5 later stopped using `InteractiveViewer` for the window itself; see the next row) |
 | The window pans and zooms by setting the map's `left`/`top`/`scale` from a `jiyuu.view.View`, not with `InteractiveViewer` | `InteractiveViewer` can only zoom around its content's top-left corner, so zooming around the pointer took two calls and jittered; found by hand in step 5 |
@@ -1150,44 +1151,62 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
 
 ### Step 6: Selection and keyboard navigation
 
-- [ ] Status: `todo`
+- [x] Status: `done`
 - Depends on: 5.
-- Rule table — `next_selection(current, key)`, where "facing" means the side the current
-  node is on (`right` for the root and any node with no side of its own, by convention, when
-  computing *its own* Right/Left — see the root row):
+- Rule table — `Navigator.move(selected, key)`, where "outward" is away from the root on
+  the selected node's side (Right on the right side, Left on the left side):
 
   | Key | From a right-side node (or the root, going right) | From a left-side node (or the root, going left) |
   |---|---|---|
-  | Right | first child (see "child choice" below), or no-op if folded/leaf | parent |
-  | Left | parent (the root, if the node is first-level) | first child, or no-op if folded/leaf |
-  | Up | previous visible sibling, or no-op if first | previous visible sibling, or no-op if first |
-  | Down | next visible sibling, or no-op if last | next visible sibling, or no-op if last |
-  | Space | toggles `current.folded`; selection does not move | toggles `current.folded`; selection does not move |
-  | Home | the root | the root |
+  | Right | a child (see "child choice" below), or no move if folded or a leaf | parent |
+  | Left | parent (the root, if the node is first-level) | a child, or no move if folded or a leaf |
+  | Up | previous sibling, or no move if first | previous sibling, or no move if first |
+  | Down | next sibling, or no move if last | next sibling, or no move if last |
+  | Space | toggles the selected node's fold; the selection does not move | same |
+  | Escape | the root, also back to 100% and centred on it | same |
 
-  From the **root**, Right selects the first child of the right column and Left selects the
-  first child of the left column (so both arrows move "outward", matching FreeMind).
-- **Child choice** on entering a subtree: each `Node` gains a transient (not saved)
-  `last_entered: Node | None` attribute. Entering remembers it if set, otherwise the middle
-  child by index (`children[len(children) // 2]`), matching FreeMind. Leaving a subtree
-  (pressing the key back towards the parent) sets the parent's `last_entered` to the child
-  just left.
+  From the **root**, Right enters the right side's first-level nodes and Left the left
+  side's (so both arrows move "outward", matching FreeMind). Up and Down among the root's
+  own children move only between those on the same side.
+- **Child choice** on entering a node's children: the child the selection last came back
+  out of, if any, otherwise the middle child by index (`children[len(children) // 2]`),
+  matching FreeMind. The table first said "first child" here, contradicting this rule; the
+  rule is what was built. The memory is kept by `Navigator`, per `(parent, side)` — not as a
+  `last_entered` field on `Node` as first planned — because it is window state, not part of
+  the map, and because the root needs one per side.
 - Tasks:
-  - [ ] `jiyuu/navigation.py` (no Flet import): `next_selection(root, selected, key) -> Node`
-        implementing the table and child-choice rule above, operating only on `Node`/side
-        information, never on pixel coordinates.
-  - [ ] UI wiring: a selection highlight (an outline on the selected node's `Container`),
-        and the view auto-scrolls/pans just enough to keep the selection's `Rect` inside the
-        viewport (no change if it is already visible).
+  - [x] `jiyuu/navigation.py` (no Flet import): `Navigator(root).move(selected, key)`
+        implementing the table and child-choice rule above, from `Node`s and their sides
+        only, never pixel coordinates. Space is handled by the window, not by `move`,
+        since it changes the map rather than the selection.
+  - [x] UI wiring: the selected node is drawn in the theme's `selection` colours (the
+        themes, from step 4.5, already define them, so this rather than the outline first
+        planned); the view pans just enough to keep the selection inside the window, and
+        not at all if it already is (`View.reveal`).
+  - [x] Clicking a node selects it. Not in the original plan; added because a selection
+        that can only be moved by keyboard is awkward to start from.
+  - [x] Holding an arrow key keeps moving (`KeyboardListener.on_key_repeat`); holding
+        Space does not keep refolding.
+  - [x] Folding a node the selection is inside (by its marker) moves the selection to that
+        node, since the selected one is no longer shown.
 - Tests:
-  - [ ] A table of `(tree shape, selected node, key) -> expected next selection`, covering:
+  - [x] A table of `(tree shape, selected node, key) -> expected next selection`, covering:
         a right-side node going both directions, a left-side node going both directions,
-        the root going Right then Left, Up/Down at the first/last sibling (no-op), Space on
-        a folded and an unfolded node, Home from a deep node.
-  - [ ] Re-entering a subtree after leaving it selects the node last left, not the middle
-        child.
+        the root going Right then Left, Up/Down at the first/last sibling (no move), the
+        root's children staying on their side, a leaf going outward, Home from a deep node
+        (`tests/test_navigation.py`). Space on a folded and an unfolded node is tested on
+        the window (`tests/test_ui.py`), where Space is handled.
+  - [x] Re-entering a subtree after leaving it selects the node last left, not the middle
+        child; the root remembers each side separately.
+  - [x] `View.reveal`: no pan when visible, the smallest pan off each edge, the top-left
+        kept for a box too big to fit (`tests/test_view.py`).
 - Done when: the tests above pass, and every key above is checked by hand against the
-  running app.
+  running app. The arrow keys, re-entering, Space, clicking, holding an arrow key, the view
+  following an off-screen selection and folding over the selection were all checked by the
+  user. Home was first planned for "select the root"; the user's keyboard has no Home key,
+  so it moved to Escape, which already centred on the root, and Home is not bound at all
+  rather than left in unchecked. Escape selecting the root was then checked by the user
+  too. **Met**: 118 tests pass, 100% coverage of `jiyuu/navigation.py` and `jiyuu/view.py`.
 
 ### Step 7: `.ink` grammar
 

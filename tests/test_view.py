@@ -47,3 +47,33 @@ def test_centre_on_puts_the_rect_in_the_middle_at_full_scale() -> None:
 
     assert view.scale == 1.0
     assert view.to_window(140.0, 55.0) == (400.0, 300.0)
+
+
+def test_reveal_leaves_a_visible_rect_alone() -> None:
+    """A rect already inside the window, with the margin to spare, causes no pan at all."""
+    view = View(x=0.0, y=0.0, scale=1.0)
+    view.reveal(Rect(100.0, 100.0, 50.0, 20.0), 800.0, 600.0, margin=20.0)
+    assert (view.x, view.y) == (0.0, 0.0)
+
+
+@pytest.mark.parametrize(
+    ("rect", "expected_window_position"),
+    [
+        (Rect(900.0, 100.0, 50.0, 20.0), (730.0, 100.0)),  # off the right: right edge at 780
+        (Rect(-300.0, 100.0, 50.0, 20.0), (20.0, 100.0)),  # off the left: left edge at 20
+        (Rect(100.0, 700.0, 50.0, 20.0), (100.0, 560.0)),  # off the bottom: bottom at 580
+        (Rect(100.0, -50.0, 50.0, 20.0), (100.0, 20.0)),  # off the top: top at 20
+    ],
+)
+def test_reveal_pans_only_as_far_as_needed(rect: Rect, expected_window_position: tuple[float, float]) -> None:
+    """A rect off one side of the window is brought just inside the margin on that side."""
+    view = View(x=0.0, y=0.0, scale=1.0)
+    view.reveal(rect, 800.0, 600.0, margin=20.0)
+    assert view.to_window(rect.x, rect.y) == expected_window_position
+
+
+def test_reveal_keeps_the_top_left_of_a_rect_too_big_to_fit() -> None:
+    """A rect wider than the window ends up with its left edge at the margin."""
+    view = View(x=0.0, y=0.0, scale=2.0)
+    view.reveal(Rect(1000.0, 10.0, 500.0, 20.0), 800.0, 600.0, margin=20.0)
+    assert view.to_window(1000.0, 10.0)[0] == 20.0
