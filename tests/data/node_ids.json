@@ -1,0 +1,22 @@
+[
+  {"label": "root's direct child", "path": [["Goals", 1]],
+   "id": "7be48fc73f0ebe9c"},
+  {"label": "deep node, three levels", "path": [["Goals", 1], ["I/O", 1], ["Sockets", 1]],
+   "id": "4f8376264b3ac471"},
+  {"label": "first same-text sibling", "path": [["TODO", 1]],
+   "id": "93daa0a88332d655"},
+  {"label": "second same-text sibling", "path": [["TODO", 2]],
+   "id": "57b391dbe76f697e"},
+  {"label": "non-ASCII text", "path": [["Résumé", 1]],
+   "id": "d372d71ad9aa94a8"},
+  {"label": "text containing a slash", "path": [["A/B", 1]],
+   "id": "5fd47c1d5589e7e2"},
+  {"label": "text containing a quote", "path": [["He said \"hi\"", 1]],
+   "id": "979299541639824d"},
+  {"label": "text containing a hash", "path": [["#tag", 1]],
+   "id": "c5d91d056df13401"},
+  {"label": "empty text", "path": [["", 1]],
+   "id": "84085c5ae4973aef"},
+  {"label": "all-digit hash (quoting hazard)", "path": [["Node", 1], ["974", 1]],
+   "id": "1984891675846323"}
+]

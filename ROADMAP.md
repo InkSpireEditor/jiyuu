@@ -62,6 +62,7 @@ Status values: `todo`, `in progress`, `done`, `blocked: <reason>`.
 | Rendering approach confirmed (step 1): one `Container` per node on a `Stack` inside an `InteractiveViewer`, text measured with Pillow and padded by `LayoutSettings.pad_x`/`pad_y` | Step 1's checks B and C passed against this approach with real measurements; no fallback needed |
 | Font: DejaVu Sans, size 16 by default | Step 1 confirmed its licence (Bitstream Vera, permissive; DejaVu's own changes public domain) permits bundling, and measured its rendered width against Pillow's prediction |
 | Redo is also bound to Ctrl+Shift+Z, alongside Ctrl+Y | Step 1's keyboard check: confirmed as this desktop's own convention, and as a distinct, reliably-reported `(key="Z", shift=True, ctrl=True)` event |
+| `Node` is `@dataclass(eq=False)`: compared and hashed by identity, not by field values | Same-text sibling disambiguation and `dict[Node, Rect]` (step 3) both need this; default dataclass equality would make two structurally identical siblings collide and would make `Node` unhashable |
 
 ## The `.ink` map file
 
@@ -562,10 +563,10 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
 
 ### Step 2: Tree model and node IDs
 
-- [ ] Status: `todo`
+- [x] Status: `done`
 - Depends on: 0.
 - Tasks:
-  - [ ] `jiyuu/model.py`:
+  - [x] `jiyuu/model.py`:
 
     ```python
     @dataclass
@@ -584,13 +585,13 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
         other_sections: dict[str, str] = field(default_factory=dict)  # anything besides
                                                                        # meta/body/nodes
     ```
-  - [ ] `walk(root) -> Iterator[Node]`: depth-first, body order, **excluding** the root
+  - [x] `walk(root) -> Iterator[Node]`: depth-first, body order, **excluding** the root
         (paths are never computed for it).
-  - [ ] `parent_of(node, root) -> Node | None`: depth-first search for the parent; `None`
+  - [x] `parent_of(node, root) -> Node | None`: depth-first search for the parent; `None`
         only for the root itself.
-  - [ ] `path_of(node, root)` and `node_id(path)`, exactly as given under "Node paths and
+  - [x] `path_of(node, root)` and `node_id(path)`, exactly as given under "Node paths and
         IDs" above.
-  - [ ] `tests/data/node_ids.json`, with exactly this content (every value below is a real
+  - [x] `tests/data/node_ids.json`, with exactly this content (every value below is a real
         computed hash, not a placeholder):
 
     ```json
@@ -617,21 +618,35 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
        "id": "1984891675846323"}
     ]
     ```
-  - [ ] The no-`flet`-import test described under Cross-cutting guards, in
+  - [x] The no-`flet`-import test described under Cross-cutting guards, in
         `tests/test_no_flet_import.py`: for each module under `jiyuu/` except
         `jiyuu/ui/*` and `jiyuu/cli.py`, run
         `python -c "import <module>; import sys; assert 'flet' not in sys.modules"` in a
         subprocess.
 - Tests:
-  - [ ] Every vector in `node_ids.json` matches `node_id(path)` exactly.
-  - [ ] Building a tree with two `TODO` siblings under `Goals`, then swapping their order,
+  - [x] Every vector in `node_ids.json` matches `node_id(path)` exactly.
+  - [x] Building a tree with two `TODO` siblings under `Goals`, then swapping their order,
         leaves the first position holding occurrence 1 and the second holding occurrence 2
         (occurrence is positional among same-text siblings, not tied to a specific
         `Node` object).
-  - [ ] The no-`flet`-import test passes.
+  - [x] The no-`flet`-import test passes.
 - Done when: the tests above pass, and `tests/data/README.md` says one line: `node_ids.json`
   is a specification (hashes computed by hand with `hashlib` directly), not a recording of
-  whatever the code currently does.
+  whatever the code currently does. **Met**: 19 tests pass, 100% coverage of `jiyuu/model.py`.
+
+  One bug found and fixed while writing the tests: `parent_of`'s search only walked
+  `walk(root)`'s results, which exclude `root` itself by design — so it could never find
+  `root` as the parent of one of its own direct children, and raised `ValueError` for every
+  first-level node instead. Fixed by checking `root.children` directly before falling back
+  to the walk.
+
+  One decision not spelled out in the pseudocode above: `Node` is declared
+  `@dataclass(eq=False)`, so it compares and hashes by identity. Two sibling nodes can be
+  completely identical in every field — the two bare `TODO` leaves in the occurrence test
+  are exactly this case — and still need to be told apart by which object they are, both
+  for `path_of`'s occurrence counting (`list.index`, `in`) and so a `Node` can be used as a
+  dictionary key (needed by `dict[Node, Rect]` in step 3) at all; the default dataclass
+  behaviour would make equal-by-value nodes collide and would make `Node` unhashable.
 
 ### Step 3: Layout
 
