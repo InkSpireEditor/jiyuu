@@ -1,8 +1,22 @@
 # jiyuu
 
 A mindmap viewer, similar to FreeMind and Freeplane, written in Python with
-[Flet](https://flet.dev). It opens FreeMind/Freeplane `.mm` files and draws them with the root
-in the middle and its branches growing to the left and right, in one of several colour themes.
+[Flet](https://flet.dev). It opens FreeMind/Freeplane `.mm` files and its own `.ink` files, and
+draws them with the root in the middle and its branches growing to the left and right, in one
+of several colour themes.
+
+An `.ink` map is plain text, editable in any text editor: a `meta` section, then the tree as
+an indented list. Opening a `.mm` file writes a `.ink` copy of it beside it, unless one is
+already there:
+
+```
+===== ink:meta
+kind: mindmap
+===== ink:body
+- Project
+  - Goals
+  - Risks
+```
 
 ## Install
 
@@ -14,8 +28,8 @@ poetry install
 
 ```bash
 poetry run jiyuu open path/to/map.mm                       # in the default theme
-poetry run jiyuu open path/to/map.mm --theme solarized-dark
-poetry run jiyuu check path/to/map.mm                      # list what could not be read
+poetry run jiyuu open path/to/map.ink --theme solarized-dark
+poetry run jiyuu check path/to/map.ink                     # list problems, by line
 ```
 
 The bundled themes are `tokyonight-night` (the default), `nord`, `nord-frost`, `nord-aurora`

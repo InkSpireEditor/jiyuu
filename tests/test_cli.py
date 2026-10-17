@@ -147,3 +147,34 @@ def test_open_never_overwrites_an_existing_ink(monkeypatch: pytest.MonkeyPatch, 
     assert result.exit_code == 0
     assert existing.read_text(encoding="utf-8") == "- edited by hand\n"
     assert len(calls) == 1
+
+
+def test_opening_an_ink_file_writes_nothing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A `.ink` file opens in the window, and is left exactly as it was."""
+    calls: list[object] = []
+    monkeypatch.setattr("jiyuu.ui.app.run", lambda *args: calls.append(args))
+    path = tmp_path / "map.ink"
+    path.write_text("- Project\n  - Goals\n", encoding="utf-8")
+    result = runner.invoke(app, ["open", str(path)])
+
+    assert result.exit_code == 0
+    assert len(calls) == 1
+    assert path.read_text(encoding="utf-8") == "- Project\n  - Goals\n"
+    assert [p.name for p in tmp_path.iterdir()] == ["map.ink"]
+
+
+def test_check_on_a_clean_ink_file_prints_nothing() -> None:
+    """A `.ink` file with nothing wrong produces no output, and succeeds."""
+    result = runner.invoke(app, ["check", str(Path(__file__).parent / "data" / "ink" / "worked-example.ink")])
+    assert result.exit_code == 0
+    assert result.stdout == ""
+
+
+def test_check_on_a_hand_edited_ink_file_prints_its_problems_by_line(tmp_path: Path) -> None:
+    """A problem in a `.ink` file is printed with its line number in the whole file, and
+    the command still succeeds, since a map could be read."""
+    path = tmp_path / "map.ink"
+    path.write_text("===== ink:meta\nkind: mindmap\n===== ink:body\n- Project\n  Goals\n", encoding="utf-8")
+    result = runner.invoke(app, ["check", str(path)])
+    assert result.exit_code == 0
+    assert result.stdout == "line 5: warning: this line has no '-', '*' or '+' marker\n"

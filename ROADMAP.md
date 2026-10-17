@@ -1278,15 +1278,15 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
 
 ### Step 8: Body reader and writer
 
-- [ ] Status: `todo`
+- [ ] Status: `in progress`
 - Depends on: 2, 7.
 - Tasks:
-  - [ ] `jiyuu/formats/body.py`: `read(body: str) -> tuple[Node | None, list[Problem]]` and
+  - [x] `jiyuu/formats/body.py`: `read(body: str) -> tuple[Node | None, list[Problem]]` and
         `write(root: Node) -> str` (`write` already done in step 7, tested in
         `tests/test_body.py`; only `read` remains), implementing exactly the algorithms given under
         "`ink:body` — reading" and "— writing" above (this step is where those two code
         blocks actually live; nothing new to design here, only to type in and test).
-  - [ ] `tests/data/bodies.json`, with entries at least as detailed as:
+  - [x] `tests/data/bodies.json`, with entries at least as detailed as:
 
     ```json
     [
@@ -1321,13 +1321,31 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
     ]
     ```
 - Tests:
-  - [ ] Every vector in `bodies.json` reads to its stated tree and problems (comparing
+  - [x] Every vector in `bodies.json` reads to its stated tree and problems (comparing
         problem messages by substring, per `message_contains`, so wording can be refined
         without breaking the test).
-  - [ ] `write(read(x)[0]) == x` for every vector whose `body` is already in canonical form.
-  - [ ] `read(write(tree))[0]` reconstructs an equal tree, for trees generated with up to 200
+  - [x] `write(read(x)[0]) == x` for every vector whose `body` is already in canonical form.
+  - [x] `read(write(tree))[0]` reconstructs an equal tree, for trees generated with up to 200
         nodes and some same-text siblings among them.
-- Done when: the tests above pass.
+- Wired into the app in the same step, so it can be tried by hand rather than only by
+  tests:
+  - [x] `formats.read_ink(text)` reads a whole `.ink` file into a `MindMap`: the tree from
+        `body.read`, `meta` as `MindMap.meta`, every other section (including `ink:nodes`,
+        not yet interpreted) kept as text. Its problems and the body's are returned
+        together, numbered by line in the whole file, not within the body.
+  - [x] `jiyuu open map.ink` opens it; opening a `.ink` writes nothing.
+  - [x] `jiyuu check map.ink` prints those problems, one per line.
+  - [ ] Hand check: open one of the user's own `.mm` maps, edit the `.ink` written beside
+        it in a text editor (rename a node, move a branch, re-indent with tabs, break a
+        line on purpose), then `jiyuu check` and `jiyuu open` the `.ink`.
+- Decided while building, not spelled out above: a line that is only a marker (`-`, as an
+  editor trimming trailing spaces leaves `write`'s `- ` for an empty node) reads as a node
+  with empty text; a marker must be followed by a space to count (`-Goals` is text with no
+  marker, and warned about); mixing tabs and spaces is warned about once per body, on the
+  first line that brings in the second kind.
+- Done when: the tests above pass, and the hand check is done by the user. Tests: 239
+  pass, including the 17 vectors in `tests/data/bodies.json`; 100% coverage of
+  `jiyuu/formats/`.
 
 ### Step 9: Map file load/save and `ink:nodes`
 
@@ -1366,7 +1384,8 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
     ```
   - [ ] `jiyuu check <file.ink>`: run `load`, print every `Problem` as
         `path:line: level: message`, exit non-zero if any is an error.
-  - [ ] The viewer (step 5) opens `.ink` files through `mapfile.load`.
+  - [ ] The viewer (step 5) opens `.ink` files through `mapfile.load` (it already opens
+        them through `formats.read_ink` since step 8, without `ink:nodes`).
   - [ ] The `.ink` written beside an opened `.mm` (step 7) goes through `mapfile.dump`, so
         it gains its `ink:nodes` section. Opening a `.ink` itself writes nothing.
   - [ ] Hand check: open one of the user's own `.mm` maps, edit the `.ink` written beside

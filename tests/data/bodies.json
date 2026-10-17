@@ -1,0 +1,102 @@
+[
+  {"label": "canonical form",
+   "body": "- Project\n  - Goals\n    - I/O\n  - Risks\n",
+   "tree": {"text": "Project", "children": [
+      {"text": "Goals", "children": [{"text": "I/O", "children": []}]},
+      {"text": "Risks", "children": []}
+   ]},
+   "problems": []},
+  {"label": "4-space indentation reads the same shape",
+   "body": "- Project\n    - Goals\n        - I/O\n",
+   "tree": {"text": "Project", "children": [
+      {"text": "Goals", "children": [{"text": "I/O", "children": []}]}
+   ]},
+   "problems": []},
+  {"label": "tab indentation reads the same shape",
+   "body": "- Project\n\t- Goals\n\t\t- I/O\n\t- Risks\n",
+   "tree": {"text": "Project", "children": [
+      {"text": "Goals", "children": [{"text": "I/O", "children": []}]},
+      {"text": "Risks", "children": []}
+   ]},
+   "problems": []},
+  {"label": "star and plus markers",
+   "body": "* Project\n  + Goals\n  * Risks\n",
+   "tree": {"text": "Project", "children": [
+      {"text": "Goals", "children": []},
+      {"text": "Risks", "children": []}
+   ]},
+   "problems": []},
+  {"label": "blank lines are ignored",
+   "body": "- Project\n\n  - Goals\n   \n  - Risks\n\n",
+   "tree": {"text": "Project", "children": [
+      {"text": "Goals", "children": []},
+      {"text": "Risks", "children": []}
+   ]},
+   "problems": []},
+  {"label": "a lone marker is a node with empty text",
+   "body": "- Project\n  -\n  - Risks\n",
+   "tree": {"text": "Project", "children": [
+      {"text": "", "children": []},
+      {"text": "Risks", "children": []}
+   ]},
+   "problems": []},
+  {"label": "text starting with '- ' keeps it",
+   "body": "- Project\n  - - Goals\n",
+   "tree": {"text": "Project", "children": [{"text": "- Goals", "children": []}]},
+   "problems": []},
+  {"label": "text that would be a fence keeps it after the marker",
+   "body": "- Project\n  - ===== ink:body\n",
+   "tree": {"text": "Project", "children": [{"text": "===== ink:body", "children": []}]},
+   "problems": []},
+  {"label": "missing marker",
+   "body": "- Project\n  Goals\n",
+   "tree": {"text": "Project", "children": [{"text": "Goals", "children": []}]},
+   "problems": [{"line": 2, "level": "warning", "message_contains": "marker"}]},
+  {"label": "a dash with no space after it is not a marker",
+   "body": "- Project\n  -Goals\n",
+   "tree": {"text": "Project", "children": [{"text": "-Goals", "children": []}]},
+   "problems": [{"line": 2, "level": "warning", "message_contains": "marker"}]},
+  {"label": "two top-level lines",
+   "body": "- Project\n  - Goals\n- Extra\n",
+   "tree": {"text": "Project", "children": [
+      {"text": "Goals", "children": []},
+      {"text": "Extra", "children": []}
+   ]},
+   "problems": [{"line": 3, "level": "error", "message_contains": "top-level"}]},
+  {"label": "indented less than the root",
+   "body": "  - Project\n    - Goals\n- Extra\n",
+   "tree": {"text": "Project", "children": [
+      {"text": "Goals", "children": []},
+      {"text": "Extra", "children": []}
+   ]},
+   "problems": [{"line": 3, "level": "warning", "message_contains": "less than the root"}]},
+  {"label": "a dedent between two open levels closes back to the shallower one",
+   "body": "- Project\n    - Goals\n        - I/O\n      - Odd\n",
+   "tree": {"text": "Project", "children": [
+      {"text": "Goals", "children": [
+         {"text": "I/O", "children": []},
+         {"text": "Odd", "children": []}
+      ]}
+   ]},
+   "problems": []},
+  {"label": "tabs and spaces mixed, reported once",
+   "body": "- Project\n  - Goals\n\t- Risks\n\t- More\n",
+   "tree": {"text": "Project", "children": [
+      {"text": "Goals", "children": []},
+      {"text": "Risks", "children": []},
+      {"text": "More", "children": []}
+   ]},
+   "problems": [{"line": 3, "level": "warning", "message_contains": "mixed"}]},
+  {"label": "windows line endings",
+   "body": "- Project\r\n  - Goals\r\n",
+   "tree": {"text": "Project", "children": [{"text": "Goals", "children": []}]},
+   "problems": []},
+  {"label": "empty body",
+   "body": "",
+   "tree": null,
+   "problems": [{"line": 1, "level": "error", "message_contains": "empty"}]},
+  {"label": "blank lines only",
+   "body": "\n  \n\n",
+   "tree": null,
+   "problems": [{"line": 1, "level": "error", "message_contains": "empty"}]}
+]

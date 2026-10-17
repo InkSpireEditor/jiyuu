@@ -53,9 +53,11 @@ def _save_beside(mindmap: MindMap, path: Path) -> None:
 
     A `.ink` file already there is never overwritten: it may hold edits made since it was
     first written, which reopening the original file must not undo. The file that was
-    opened is only ever read.
+    opened is only ever read, and opening a `.ink` file itself writes nothing.
     """
     target = path.with_suffix(ink.SUFFIX)
+    if target == path:
+        return
     if target.exists():
         print(f"{target}: already exists, not overwritten", file=sys.stderr)
         return
@@ -71,13 +73,13 @@ def open_map(
         typer.Option(help=f"A bundled theme ({', '.join(available_themes())}) or a .yaml path."),
     ] = DEFAULT_THEME,
 ) -> None:
-    """Open the map in `path` in a window, and save it as a `.ink` file beside it.
+    """Open the map in `path` (a `.mm` or `.ink` file) in a window.
 
     The theme and the file are both read before any window opens, so that a theme or a
     file that cannot be used is reported on the terminal and exits non-zero, rather than
     opening an empty window. Warnings about a file that did read are printed the same way,
-    and the window opens regardless. The `.ink` copy is written only if there is not one
-    already (see `_save_beside`).
+    and the window opens regardless. Opening a `.mm` file also writes a `.ink` copy beside
+    it, if there is not one already (see `_save_beside`).
     """
     try:
         chosen_theme = load_theme(theme)
