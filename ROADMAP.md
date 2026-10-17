@@ -358,6 +358,10 @@ These apply to every step below, not just the one that introduces them.
 - A `.mm` file is never written except by an explicit export to a path the user chose.
 - Autosave never overwrites a file that changed on disk since jiyuu last read or wrote it.
 - Writes are atomic: write a temporary file in the same directory, then `os.replace`.
+- Whenever a step produces something visually meaningful (a tree, a computed layout, a
+  parsed map), `scripts/demo_viewer.py` is extended to show it in a real Flet window, so the
+  user can look at and try new features as they land rather than only reading a test-pass
+  report. It is promoted into `jiyuu/ui/app.py` at step 5 rather than discarded.
 
 ## Steps
 
@@ -760,6 +764,12 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
         near edge, as a cubic Bézier curve bulging horizontally (control points offset
         horizontally by half of `horizontal_gap`, not vertically) — this is what step 1's
         check B already exercised.
+  - [ ] `scripts/demo_viewer.py`: builds the worked-example tree from this document as real
+        `Node`/`MindMap` objects, lays it out with `layout.layout`, and draws it in a Flet
+        window — the same positioned-`Container`-on-a-`Stack`-inside-an-`InteractiveViewer`
+        approach `scripts/flet_check.py` already validated, with edges as the same Bézier
+        curves. Stays open until closed by hand, so the result is something to actually look
+        at rather than only a passing assertion on its coordinates.
 - Worked example, over the same tree as above, with every node given a **fixed** box height
   of 32px (ignoring real text metrics here, only to keep the arithmetic checkable by hand;
   real heights come from `node_box_size` once step 1 picks a font) and
@@ -803,8 +813,10 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
         set of seeds if `hypothesis` is not added as a dependency).
   - [ ] Every edge's two endpoints sit on the correct facing edges of the two boxes it
         connects.
-- Done when: the tests above pass, and laying out 200 nodes takes under 50 ms (timed in a
-  test marked `slow`, or measured once and the number written into this section).
+- Done when: the tests above pass, laying out 200 nodes takes under 50 ms (timed in a test
+  marked `slow`, or measured once and the number written into this section), and
+  `scripts/demo_viewer.py` is run and checked by eye against the worked example above (root
+  centred, `Goals` on the right, `Risks` on the left, no boxes overlapping).
 
 ### Step 4: `.mm` reader
 
