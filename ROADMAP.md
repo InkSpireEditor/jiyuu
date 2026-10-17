@@ -63,6 +63,8 @@ Status values: `todo`, `in progress`, `done`, `blocked: <reason>`.
 | Font: DejaVu Sans, size 16 by default | Step 1 confirmed its licence (Bitstream Vera, permissive; DejaVu's own changes public domain) permits bundling, and measured its rendered width against Pillow's prediction |
 | Redo is also bound to Ctrl+Shift+Z, alongside Ctrl+Y | Step 1's keyboard check: confirmed as this desktop's own convention, and as a distinct, reliably-reported `(key="Z", shift=True, ctrl=True)` event |
 | `Node` is `@dataclass(eq=False)`: compared and hashed by identity, not by field values | Same-text sibling disambiguation and `dict[Node, Rect]` (step 3) both need this; default dataclass equality would make two structurally identical siblings collide and would make `Node` unhashable |
+| DejaVu Sans ships as a package asset (`jiyuu/assets/DejaVuSans.ttf`, with its own licence text alongside it, both listed in `pyproject.toml`'s `include`), not referenced by a system path | Portability: step 1's feasibility check used this machine's own system font path, which only this machine has |
+| `InteractiveViewer` needs `constrained=False` and a large `boundary_margin` to pan at all around content bigger than the viewport, and `trackpad_scroll_causes_scale=True` so a trackpad's scroll zooms (matching FreeMind) rather than pans | Found by hand in step 3's demo viewer; step 1's check B never exercised real pointer gestures, only the programmatic `.pan`/`.zoom` calls, so this went unnoticed until something used it interactively |
 
 ## The `.ink` map file
 
@@ -654,7 +656,7 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
 
 ### Step 3: Layout
 
-- [ ] Status: `todo`
+- [x] Status: `done`
 - Depends on: 1, 2.
 - Rule (FreeMind-style, root forks, everything else inherits its side): the **root** splits
   its children into two independent vertical columns, left and right; **every other node**
@@ -662,14 +664,18 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
   among the root's children is assigned, in body order, to whichever column currently has
   the smaller total height — ties go to the right.
 - Coordinate convention: a node's box is `Rect(x, y, width, height)` with `(x, y)` its
-  **top-left corner**, in a plane where the root's own box is centred at `(0, 0)`. For a
-  right-side node, `x` is its left edge; `horizontal_gap` is measured from a parent's right
-  edge to its child's left edge. For a **left-side** node, the box is still stored as
+  **top-left corner**. The root's box is horizontally centred on `x = 0` (`x = -width / 2`);
+  everything else is built outward from its parent's edge nearest to it. For a right-side
+  node, `x` is its left edge; `horizontal_gap` is measured from a parent's right edge to its
+  child's left edge. For a **left-side** node, the box is still stored as
   `Rect(x, y, width, height)` with `x` its left edge, but it is *placed* right-to-left: the
   placement algorithm below computes each left-side node's right edge first (the edge
-  nearest its parent) and derives `x = right_edge - width`.
+  nearest its parent) and derives `x = right_edge - width`. Vertically, the **whole plane**
+  is centred on `y = 0`: the top-level call passes `y_top = -height / 2`, where `height` is
+  the full height the root's subtree needs, so the root — and, in a balanced layout, often
+  its first-level children too — ends up centred on `y = 0`, not merely starting there.
 - Tasks:
-  - [ ] `jiyuu/measure.py`:
+  - [x] `jiyuu/measure.py`:
 
     ```python
     class Measurer(Protocol):
@@ -685,7 +691,7 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
     ```
     and a `FixedMeasurer(width_per_char: float, height: float)` fake for tests, returning
     `(len(text) * width_per_char, height)`.
-  - [ ] `jiyuu/layout.py`:
+  - [x] `jiyuu/layout.py`:
 
     ```python
     @dataclass
@@ -750,21 +756,26 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
     def layout(root: Node, measurer: Measurer, settings: LayoutSettings) -> tuple[dict[Node, Rect], list[Edge]]:
         rects: dict[Node, Rect] = {}
         height = subtree_height(root, measurer, settings, is_root=True)
-        place(root, 0.0, 0.0, height, "right", measurer, settings, rects, is_root=True)
-        edges = [Edge(parent=p, child=c, side=resolved_side_for_edge(p, c))
-                 for p in rects for c in p.children if not p.folded]
+        place(root, 0.0, -height / 2, height, "right", measurer, settings, rects, is_root=True)
+        edges = [Edge(parent=p, child=c, side="right" if rects[c].x >= rects[p].x else "left")
+                 for p in rects for c in p.children if c in rects]
         return rects, edges
     ```
-    `resolved_side(root, child)` reads `child.side` if set, else runs the balancing rule
-    against the **current** `rects`/running totals computed so far in body order (ties to
-    the right); cache the result onto the child for the rest of this layout pass so passes
-    1 and 2 agree on the same assignment without re-balancing differently between them.
-  - [ ] An edge is drawn from the midpoint of the parent's facing edge (right edge if the
+    `y_top = -height / 2`, not `0.0`, is what centres the root (and the whole plane) on
+    `y = 0` — see the Coordinate convention above. `resolved_side(root, child)` reads
+    `child.side` if set, else runs the balancing rule against the **current** running
+    totals computed so far in body order (ties to the right), and writes the result back
+    onto `child.side` itself — which both makes passes 1 and 2 agree on the same assignment
+    without re-deriving it twice, and keeps the assignment stable across repeated layout
+    calls rather than re-balanced from scratch, possibly differently, every time. An edge's
+    side is read off the two boxes already placed — whichever one is further right — rather
+    than tracked separately, since it has to agree with wherever they actually ended up.
+  - [x] An edge is drawn from the midpoint of the parent's facing edge (right edge if the
         child is on the right, left edge if on the left) to the midpoint of the child's
         near edge, as a cubic Bézier curve bulging horizontally (control points offset
         horizontally by half of `horizontal_gap`, not vertically) — this is what step 1's
         check B already exercised.
-  - [ ] `scripts/demo_viewer.py`: builds the worked-example tree from this document as real
+  - [x] `scripts/demo_viewer.py`: builds the worked-example tree from this document as real
         `Node`/`MindMap` objects, lays it out with `layout.layout`, and draws it in a Flet
         window — the same positioned-`Container`-on-a-`Stack`-inside-an-`InteractiveViewer`
         approach `scripts/flet_check.py` already validated, with edges as the same Bézier
@@ -793,30 +804,70 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
   - Right column height = `column_height([Goals]) = 120`. Left column height =
     `column_height([Risks]) = 32`.
   - `subtree_height(Project, is_root) = max(32, 120, 32) = 120`.
-  - Placement: `Project`'s own box is centred at `y_center = 0 + 120/2 = 60`, height 32, so
-    its box top is `y = 44`. The right column gets the *same* `available_height = 120`
-    starting at `y_top = 0`; since its one child (`Goals`) already needs the full 120, it is
-    placed with `y_top = 0 + (120-120)/2 = 0`, i.e. `Goals`'s box is centred at `y=60` too.
-    The left column also gets `available_height = 120` starting at `y_top = 0`; its one
-    child (`Risks`, height 32) is centred within that span: `y_top = 0 + (120-32)/2 = 44`,
-    so `Risks`'s box is also centred at `y=60`.
+  - Placement: the whole plane is centred on `y = 0`, so the top-level call uses
+    `y_top = -height/2 = -60`. `Project`'s own box is centred at
+    `y_center = -60 + 120/2 = 0`, height 32, so its box top is `y = -16`. The right column
+    gets the *same* span, `y_top = -60`, `available_height = 120`; since its one child
+    (`Goals`) already needs the full 120, it is placed with no further offset
+    (`y = -60 + (120-120)/2 = -60`), so `Goals`'s own box is centred at
+    `y_center = -60 + 120/2 = 0` too — top `y = -16`, the same as `Project`'s. The left
+    column gets the same span as well; its one child (`Risks`, height 32) is centred within
+    it: `y = -60 + (120-32)/2 = -16`, so `Risks`'s own box is centred at
+    `y_center = -16 + 32/2 = 0` — top `y = -16`, the same box position as `Goals`'s, because
+    both are centred within the identical 120-tall span the root's layout reserved on each
+    side.
 - Tests:
-  - [ ] A single root with no children: one `Rect` at `(-w/2, -h/2, w, h)`.
-  - [ ] One child on each side, with the heights above, matching exactly.
-  - [ ] Balancing when no side is recorded for any first-level node (first child goes
+  - [x] A single root with no children: one `Rect` at `(-w/2, -h/2, w, h)`.
+  - [x] One child on each side, with the heights above, matching exactly.
+  - [x] Balancing when no side is recorded for any first-level node (first child goes
         right, second goes left, third goes right again, ties broken to the right).
-  - [ ] An explicit `side` is respected even when it leaves the two columns unbalanced.
-  - [ ] A folded node's subtree occupies exactly its own height, regardless of what its
+  - [x] An explicit `side` is respected even when it leaves the two columns unbalanced.
+  - [x] A folded node's subtree occupies exactly its own height, regardless of what its
         (hidden) children would need.
-  - [ ] No two rectangles overlap, checked on randomly generated trees of up to 200 nodes
+  - [x] No two rectangles overlap, checked on randomly generated trees of up to 200 nodes
         (property-based, e.g. with `hypothesis`, or a seeded random generator and a fixed
         set of seeds if `hypothesis` is not added as a dependency).
-  - [ ] Every edge's two endpoints sit on the correct facing edges of the two boxes it
+  - [x] Every edge's two endpoints sit on the correct facing edges of the two boxes it
         connects.
 - Done when: the tests above pass, laying out 200 nodes takes under 50 ms (timed in a test
   marked `slow`, or measured once and the number written into this section), and
   `scripts/demo_viewer.py` is run and checked by eye against the worked example above (root
-  centred, `Goals` on the right, `Risks` on the left, no boxes overlapping).
+  centred, `Goals` on the right, `Risks` on the left, no boxes overlapping). **Met**: 37
+  tests pass (`tests/test_layout.py`, `tests/test_measure.py`), 200-node layouts took
+  0.7–1.0 ms across 10 random trees, well under the 50 ms budget.
+
+  Two things found and fixed while implementing this step, both now folded into the text
+  above rather than left as errata:
+
+  - The worked example's own placement arithmetic used `y_top = 0` at the top level, which
+    does not actually centre the root on `y = 0` — it only does that in the trivial case
+    where the root's own height equals the whole subtree's height. `y_top = -height / 2` is
+    what the Coordinate convention actually requires, and is what both the pseudocode and
+    the worked example now show.
+  - `jiyuu/layout.py`'s `_place` and `_place_column` originally took every one of their
+    parameters positionally, which pylint flagged (`too-many-positional-arguments`) and
+    which also made call sites harder to read; `measurer`, `settings` and `out` are now
+    keyword-only at both.
+
+  Running `scripts/demo_viewer.py` also found real bugs in how it drove `InteractiveViewer`
+  — nothing in `jiyuu/layout.py` itself — fixed by hand, since these can only be found and
+  checked by someone actually dragging and scrolling, not by an automated test:
+
+  - `constrained`, which defaults to `True`, forces content bigger than the viewport to fit
+    the viewport instead — the exact opposite of what panning around a map needs, per this
+    control's own documentation. Panning did not work at all until this was set `False`.
+  - `boundary_margin`, which defaults to zero, confines panning to exactly the content's own
+    bounds, leaving no empty space around a small map to pan into. Set to a generous margin
+    instead.
+  - `trackpad_scroll_causes_scale` (default `False`) makes a trackpad's two-finger scroll
+    pan rather than zoom; set to `True` so scrolling zooms instead, matching FreeMind's own
+    scroll-to-zoom convention — the trade-off being that two-finger scroll no longer pans
+    at all (dragging still does).
+  - Left open, deferred to step 5 rather than chased down now: with scroll-to-zoom and a
+    natural-scrolling trackpad, the zoom direction feels backwards to at least one user.
+    No property on `InteractiveViewer` controls this directly; a `GestureDetector.on_scroll`
+    handler driving `InteractiveViewer.zoom` by hand, instead of its own built-in trackpad
+    handling, is the likely fix, but needs someone with a trackpad to actually check it.
 
 ### Step 4: `.mm` reader
 
@@ -911,7 +962,12 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
         picker (`ft.FilePicker`).
   - [ ] Pan by dragging the background (`ft.InteractiveViewer`, or manual drag handling if
         the fallback from step 1 applies); zoom with the mouse wheel, clamped to a sane
-        range (e.g. 25%–400%).
+        range (e.g. 25%–400%). Carry over the `constrained`/`boundary_margin`/
+        `trackpad_scroll_causes_scale` settings step 3's demo viewer needed (Decisions
+        table) rather than rediscovering them, and resolve the two issues step 3 deferred
+        here: a trackpad's scroll-to-zoom direction, which felt backwards to at least one
+        user, and a general, hands-on check of pan/zoom feel now that it is the real
+        viewer, not a demo script.
   - [ ] "Centre on root", bound to Escape: resets pan/zoom so the root's `Rect` is centred
         in the viewport at 100%.
   - [ ] The window title is `"{file name} — jiyuu"`.

@@ -19,6 +19,10 @@ jiyuu = "jiyuu.cli:app"
 [tool.poetry]
 requires-poetry = ">=2.0"
 packages = [{ include = "jiyuu" }]
+include = [
+    { path = "jiyuu/assets/DejaVuSans.ttf" },
+    { path = "jiyuu/assets/DejaVuSans-LICENSE.txt" },
+]
 
 [tool.poetry.group.dev.dependencies]
 pytest = "*"

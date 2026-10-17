@@ -67,7 +67,12 @@ async def _check_b(page: ft.Page) -> None:
         for i in range(NODE_COUNT)
     ]
     stack = ft.Stack(controls=containers, width=20 * 90, height=10 * 40)
-    viewer = ft.InteractiveViewer(content=stack)
+    # constrained=False: the default, True, forces content bigger than the viewport to fit
+    # the viewport instead, which breaks real pointer-driven panning and zooming entirely
+    # (found only later, by hand, once something used this for real — the timing measured
+    # below is unaffected either way, since InteractiveViewer.pan/.zoom bypass gesture
+    # recognition and manipulate the transform directly).
+    viewer = ft.InteractiveViewer(content=stack, constrained=False)
     page.add(viewer)
     page.update()
     await asyncio.sleep(0.3)  # let the first paint settle before timing updates
