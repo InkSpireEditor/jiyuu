@@ -1,20 +1,23 @@
 """A growing visual preview of jiyuu, run by hand to see what has been built so far.
 
 Each step that produces something visually meaningful is meant to extend what this script
-shows — a real `.mm` or `.ink` file once their readers exist, folding once editing exists —
-rather than deferring everything visual to the dedicated viewer and editor steps. Today it
-only draws one fixed example tree, laid out for real by `jiyuu.layout.layout`, drawn the same
+shows — folding once editing exists, an `.ink` file once that reader exists too — rather
+than deferring everything visual to the dedicated viewer and editor steps. It is drawn the
 way `scripts/flet_check.py` already confirmed works: one `Container` per node on a `Stack`
 inside an `InteractiveViewer`, with edges as cubic Bézier curves on a `Canvas` beneath it.
 
-    poetry run python scripts/demo_viewer.py
+    poetry run python scripts/demo_viewer.py              # a fixed example tree
+    poetry run python scripts/demo_viewer.py path/to.mm   # a real Freeplane/FreeMind map
 """
 
 from __future__ import annotations
 
+import sys
+
 import flet as ft
 import flet.canvas as cv
 
+from jiyuu.formats import mm
 from jiyuu.layout import Edge, LayoutSettings, Rect, layout
 from jiyuu.measure import DEFAULT_FONT_PATH, DEFAULT_FONT_SIZE, PillowMeasurer
 from jiyuu.model import Node
@@ -34,6 +37,21 @@ def _example_tree() -> Node:
     )
     risks = Node(text="Risks", side="left", children=[Node(text="Flet performance")])
     return Node(text="Project", children=[goals, risks])
+
+
+def _tree_to_show() -> Node | None:
+    """The tree to draw: a `.mm` file named on the command line, or the example tree if
+    none was given. Prints any warnings from reading a real file, and `None` if it could
+    not be read into a tree at all — the caller's cue not to open a window at all."""
+    if len(sys.argv) <= 1:
+        return _example_tree()
+
+    path = sys.argv[1]
+    with open(path, encoding="utf-8") as handle:
+        mindmap, warnings = mm.read(handle.read())
+    for warning in warnings:
+        print(f"{path}: {warning}")
+    return mindmap.root if mindmap is not None else None
 
 
 def _shift_into_view(rects: dict[Node, Rect]) -> tuple[dict[Node, Rect], float, float]:
@@ -78,55 +96,69 @@ def _edge_path(edge: Edge, rects: dict[Node, Rect], settings: LayoutSettings) ->
     )
 
 
-def main(page: ft.Page) -> None:
-    """Builds the example tree, lays it out, and draws it in a pannable, zoomable view."""
-    page.title = "jiyuu — demo viewer"
-    page.fonts = {FONT_FAMILY: DEFAULT_FONT_PATH}
+def _build_main(root: Node):
+    """A Flet `main` callback that lays out and draws `root`.
 
-    measurer = PillowMeasurer(DEFAULT_FONT_PATH, DEFAULT_FONT_SIZE)
-    settings = LayoutSettings()
-    rects, edges = layout(_example_tree(), measurer, settings)
-    rects, width, height = _shift_into_view(rects)
+    A closure over `root` rather than a module-level global: `root` is only known once
+    `_tree_to_show` has run, which happens before `ft.run` is ever called (see `__main__`
+    below), specifically so a file that cannot be read never gets as far as opening a
+    window at all — destroying one before it has finished mounting, which was tried first,
+    crashes the GTK embedding this runs under.
+    """
 
-    boxes: list[ft.Control] = [
-        ft.Container(
-            content=ft.Text(node.text, font_family=FONT_FAMILY, size=DEFAULT_FONT_SIZE),
-            left=rect.x,
-            top=rect.y,
-            width=rect.width,
-            height=rect.height,
-            bgcolor=ft.Colors.BLUE_50,
-            border=ft.Border.all(1, ft.Colors.BLUE_300),
-            border_radius=6,
-            alignment=ft.Alignment.CENTER,
+    def main(page: ft.Page) -> None:
+        page.title = "jiyuu — demo viewer"
+        page.fonts = {FONT_FAMILY: DEFAULT_FONT_PATH}
+
+        measurer = PillowMeasurer(DEFAULT_FONT_PATH, DEFAULT_FONT_SIZE)
+        settings = LayoutSettings()
+        rects, edges = layout(root, measurer, settings)
+        rects, width, height = _shift_into_view(rects)
+
+        boxes: list[ft.Control] = [
+            ft.Container(
+                content=ft.Text(node.text, font_family=FONT_FAMILY, size=DEFAULT_FONT_SIZE),
+                left=rect.x,
+                top=rect.y,
+                width=rect.width,
+                height=rect.height,
+                bgcolor=ft.Colors.BLUE_50,
+                border=ft.Border.all(1, ft.Colors.BLUE_300),
+                border_radius=6,
+                alignment=ft.Alignment.CENTER,
+            )
+            for node, rect in rects.items()
+        ]
+        canvas = cv.Canvas(
+            [_edge_path(edge, rects, settings) for edge in edges], width=width, height=height
         )
-        for node, rect in rects.items()
-    ]
-    canvas = cv.Canvas(
-        [_edge_path(edge, rects, settings) for edge in edges], width=width, height=height
-    )
-    stack = ft.Stack([canvas, *boxes], width=width, height=height)
-    page.add(
-        ft.InteractiveViewer(
-            content=stack,
-            min_scale=0.25,
-            max_scale=4.0,
-            # The content is meant to be larger than the viewport and panned around inside
-            # it. `constrained` defaults to True, which instead forces the content to fit
-            # the viewport — exactly the opposite of what panning needs, per this control's
-            # own documentation.
-            constrained=False,
-            # `boundary_margin` defaults to zero, which confines panning to exactly the
-            # content's own bounds — nowhere to pan into around a small map. A generous
-            # margin is what makes panning into the empty space around the map possible.
-            boundary_margin=ft.Margin.all(2000),
-            # Trackpad scrolling defaults to panning, not zooming, which is why scrolling
-            # to zoom on a trackpad did nothing before this was set.
-            trackpad_scroll_causes_scale=True,
-            expand=True,
+        stack = ft.Stack([canvas, *boxes], width=width, height=height)
+        page.add(
+            ft.InteractiveViewer(
+                content=stack,
+                min_scale=0.25,
+                max_scale=4.0,
+                # The content is meant to be larger than the viewport and panned around
+                # inside it. `constrained` defaults to True, which instead forces the
+                # content to fit the viewport — exactly the opposite of what panning needs,
+                # per this control's own documentation.
+                constrained=False,
+                # `boundary_margin` defaults to zero, which confines panning to exactly the
+                # content's own bounds — nowhere to pan into around a small map. A generous
+                # margin is what makes panning into the empty space around the map possible.
+                boundary_margin=ft.Margin.all(2000),
+                # Trackpad scrolling defaults to panning, not zooming, which is why
+                # scrolling to zoom on a trackpad did nothing before this was set.
+                trackpad_scroll_causes_scale=True,
+                expand=True,
+            )
         )
-    )
+
+    return main
 
 
 if __name__ == "__main__":
-    ft.run(main)
+    _root = _tree_to_show()
+    if _root is None:
+        sys.exit(1)
+    ft.run(_build_main(_root))

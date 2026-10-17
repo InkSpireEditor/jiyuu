@@ -871,7 +871,7 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
 
 ### Step 4: `.mm` reader
 
-- [ ] Status: `todo`
+- [x] Status: `done`
 - Depends on: 2.
 - Freeplane/FreeMind element and attribute mapping:
 
@@ -907,29 +907,43 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
   is folded; folding is a view concern, not a parsing one).
 
 - Tasks:
-  - [ ] `jiyuu/formats/mm.py`, `read(text: str) -> tuple[MindMap, list[str]]`, parsed with
-        `defusedxml.ElementTree.fromstring` (never the standard library's `ElementTree`
-        directly, to keep external entities and DTD processing refused).
-  - [ ] Recursive descent: `_read_node(element, is_first_level: bool) -> Node`, building
-        `Node.text` / `.folded` / `.side` per the mapping table, recursing into every child
-        `<node>` element, and appending one warning string per dropped/ignored thing it
-        sees (named by element or attribute, e.g. `"dropped <icon> on node 'Goals'"`).
-  - [ ] The map's outermost element must be exactly one `<node>` under `<map>`; anything
+  - [x] `jiyuu/formats/mm.py`, `read(text: str) -> tuple[MindMap | None, list[str]]`
+        (`MindMap`, not `MindMap | None`, was written here first, but malformed XML and a
+        `<map>` with no `<node>` at all have no tree to return — only a warning), parsed
+        with `defusedxml.ElementTree.fromstring` (never the standard library's
+        `ElementTree` directly, to keep external entities and DTD processing refused).
+  - [x] Recursive descent: `_read_node(element, depth: int) -> Node`, building `Node.text`
+        / `.folded` / `.side` per the mapping table, recursing into every child `<node>`
+        element, and appending one warning string per dropped/ignored thing it sees (named
+        by element or attribute, e.g. `"dropped <icon> on node 'Goals'"`). `depth`, not a
+        plain `is_first_level` flag as first written here: a flag can say "read `POSITION`
+        on me" but cannot also tell its own recursive call what to tell *its* children,
+        which is exactly the bit of information the one call processing the root needs.
+  - [x] The map's outermost element must be exactly one `<node>` under `<map>`; anything
         else (`<arrowlink>` at the map level, more than one top-level `<node>`) produces a
         warning and the first `<node>` found is used as the root.
+  - [x] `jiyuu check <file>` (`jiyuu/cli.py`): prints every warning `read` returns, one per
+        line; exits non-zero only when no tree could be read at all, not for warnings
+        alone on a file that otherwise read fine.
+  - [x] `scripts/demo_viewer.py` takes an optional `.mm` path on the command line and draws
+        that file's tree instead of the fixed example one, printing any warnings first. A
+        file that cannot be read into a tree at all is reported the same way, and no
+        window opens — checked before `ft.run` is ever called, not inside the page
+        callback: destroying a window from inside its own still-mounting callback, tried
+        first, crashes the GTK embedding this runs under.
 - Tests, against hand-written fixtures in `tests/data/mm/`:
-  - [ ] A FreeMind 1.0.1-style file (no `richcontent`, `TEXT` on every node).
-  - [ ] A Freeplane-style file with `map_styles`, `attribute`/`attribute_registry`, `icon`,
+  - [x] A FreeMind 1.0.1-style file (no `richcontent`, `TEXT` on every node).
+  - [x] A Freeplane-style file with `map_styles`, `attribute`/`attribute_registry`, `icon`,
         `<node><richcontent TYPE="NOTE">` (a note, not node text — must **not** be read as
         the node's text), `richcontent TYPE="NODE"` node text, and a cloned node (`<node>`
         with no `TEXT`/`richcontent` of its own, referencing another by Freeplane's own
         mechanism — treated as an empty-text node with a warning, since clone resolution is
         out of scope).
-  - [ ] Malformed XML (an unclosed tag) produces a warning and does not crash; the file is
+  - [x] Malformed XML (an unclosed tag) produces a warning and does not crash; the file is
         reported as unreadable rather than partially parsed.
-  - [ ] An XML entity (`&amp;`, `&#233;`) and non-ASCII text (`Résumé`) round-trip through
+  - [x] An XML entity (`&amp;`, `&#233;`) and non-ASCII text (`Résumé`) round-trip through
         `read` correctly.
-  - [ ] The example input above reads to exactly the tree and metadata described after it.
+  - [x] The example input above reads to exactly the tree and metadata described after it.
 - Guards: no external entities or DTD processing — covered by using `defusedxml` rather than
   `xml.etree.ElementTree` directly; a test feeding a billion-laughs-style payload confirms it
   raises rather than hangs or allocates unboundedly.
@@ -938,7 +952,14 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
   fix adds a new synthetic fixture that reproduces the problem, so no real map content
   enters the repository.
 - Done when: the tests above pass, and `jiyuu check <file.mm>` prints the warnings a file
-  produces, one per line.
+  produces, one per line. **Met**: 45 tests pass (11 in `tests/test_mm.py`, 4 more in
+  `tests/test_cli.py` for `check`), 100% coverage of `jiyuu/formats/mm.py`.
+
+  One real bug found by the tests and fixed: `_read_node`'s `is_first_level` flag, as first
+  written, was passed as `False` on every single recursive call — including from the root's
+  own frame into its direct children, which are exactly the nodes `POSITION` applies to.
+  No `.mm` file's `POSITION` was ever read; every first-level node silently lost its side.
+  Replaced with `depth`, for the reason given under Tasks above.
 
 ### Step 5: Viewer window
 
