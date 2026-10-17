@@ -22,6 +22,8 @@ packages = [{ include = "jiyuu" }]
 include = [
     { path = "jiyuu/assets/DejaVuSans.ttf" },
     { path = "jiyuu/assets/DejaVuSans-LICENSE.txt" },
+    { path = "jiyuu/assets/themes/*.yaml" },
+    { path = "jiyuu/assets/themes/README.md" },
 ]
 
 [tool.poetry.group.dev.dependencies]

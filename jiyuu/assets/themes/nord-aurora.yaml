@@ -1,0 +1,13 @@
+# Nord's Aurora colours (nord11 to nord15) for node levels, on Nord's Polar Night background.
+name: Nord Aurora
+credits: Nord, https://github.com/nordtheme/nord (MIT)
+canvas: "#2e3440"
+edge: "#81a1c1"
+selection: {text: "#2e3440", background: "#88c0d0"}
+root: {text: "#eceff4", background: "#4c566a"}
+levels:
+  - {text: "#eceff4", background: "#bf616a"}
+  - {text: "#2e3440", background: "#d08770"}
+  - {text: "#2e3440", background: "#ebcb8b"}
+  - {text: "#2e3440", background: "#a3be8c"}
+  - {text: "#2e3440", background: "#b48ead"}

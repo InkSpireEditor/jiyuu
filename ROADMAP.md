@@ -64,6 +64,9 @@ Status values: `todo`, `in progress`, `done`, `blocked: <reason>`.
 | Redo is also bound to Ctrl+Shift+Z, alongside Ctrl+Y | Step 1's keyboard check: confirmed as this desktop's own convention, and as a distinct, reliably-reported `(key="Z", shift=True, ctrl=True)` event |
 | `Node` is `@dataclass(eq=False)`: compared and hashed by identity, not by field values | Same-text sibling disambiguation and `dict[Node, Rect]` (step 3) both need this; default dataclass equality would make two structurally identical siblings collide and would make `Node` unhashable |
 | DejaVu Sans ships as a package asset (`jiyuu/assets/DejaVuSans.ttf`, with its own licence text alongside it, both listed in `pyproject.toml`'s `include`), not referenced by a system path | Portability: step 1's feasibility check used this machine's own system font path, which only this machine has |
+| Colours live in YAML theme files (`jiyuu/assets/themes/`), never as constants in UI code; five bundled: `nord` (from Freeplane's `dark_nord_template.mm`), `nord-frost`, `nord-aurora`, `tokyonight-night` (default), `solarized-dark` | User's choice: themes stored separately and editable without touching code; `tokyonight-night` as default, chosen by the user after seeing them |
+| Theme contrast floor is 3.0 (WCAG AA large text / non-text), not 4.5 | Several palette colours cannot reach 4.5 against any text colour in their own palette; replacing them would no longer be the palette |
+| Themes are step 4.5, before the viewer, not 5.5 after it | Theme loading has no Flet dependency, and the viewer can be built on it from the start instead of being refactored afterwards |
 | `InteractiveViewer` needs `constrained=False` and a large `boundary_margin` to pan at all around content bigger than the viewport, and `trackpad_scroll_causes_scale=True` so a trackpad's scroll zooms (matching FreeMind) rather than pans | Found by hand in step 3's demo viewer; step 1's check B never exercised real pointer gestures, only the programmatic `.pan`/`.zoom` calls, so this went unnoticed until something used it interactively |
 
 ## The `.ink` map file
@@ -961,10 +964,109 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
   No `.mm` file's `POSITION` was ever read; every first-level node silently lost its side.
   Replaced with `depth`, for the reason given under Tasks above.
 
+### Step 4.5: Themes
+
+- [x] Status: `done`
+- Depends on: 0.
+- Purpose: every colour jiyuu draws comes from a named theme stored in its own YAML file,
+  not from colour constants in widget code. Placed before step 5 rather than after it, so
+  the viewer is built on themes from the start instead of hardcoding colours and having
+  them refactored out afterwards.
+- Theme file format (`jiyuu/assets/themes/<name>.yaml`; every colour a quoted `"#rrggbb"`
+  string, since an unquoted `#` starts a YAML comment):
+
+  ```yaml
+  name: Nord Frost
+  credits: Nord, https://github.com/nordtheme/nord (MIT)
+  canvas: "#2e3440"          # background behind the whole map
+  edge: "#d8dee9"            # edges, and node borders
+  selection: {text: "#2e3440", background: "#ebcb8b"}
+  root: {text: "#eceff4", background: "#4c566a"}
+  levels:                    # depth 1, 2, 3, ...; cycles back to the first after the last
+    - {text: "#2e3440", background: "#8fbcbb"}
+    - {text: "#2e3440", background: "#88c0d0"}
+    - {text: "#2e3440", background: "#81a1c1"}
+    - {text: "#eceff4", background: "#5e81ac"}
+  ```
+
+  A node at depth `d >= 1` uses `levels[(d - 1) % len(levels)]`; the root uses `root`.
+
+- The five bundled themes. Every value is taken from the palette's own published source
+  (fetched 2026-10-17), with jiyuu choosing which palette colour plays which role. Each
+  pair's text colour is whichever of the palette's own darkest or lightest colour gives the
+  higher contrast, computed as the WCAG 2 contrast ratio:
+
+  | File | Source | Canvas | Edge | Root (text / background) | Levels (backgrounds, in order) | Lowest text contrast |
+  |---|---|---|---|---|---|---|
+  | `nord.yaml` | Freeplane's own `dark_nord_template.mm`, built on Nord | `#2e3440` | `#81a1c1` | `#ffffff` / `#484747` | `#d08770`, `#ebcb8b`, `#a3be8c`, `#b48ead`, `#81a1c1`, `#88c0d0`, `#8fbcbb`, `#d8dee9`, `#e5e9f0`, `#eceff4` (text as in the template, except level 1: `#2e3440`, not the template's `#eceff4` at 2.47) | 3.31 (the template's own selection colours) |
+  | `nord-frost.yaml` | Nord Frost group | `#2e3440` | `#d8dee9` | `#eceff4` / `#4c566a` | `#8fbcbb`, `#88c0d0`, `#81a1c1`, `#5e81ac` | 3.50 |
+  | `nord-aurora.yaml` | Nord Aurora group | `#2e3440` | `#81a1c1` | `#eceff4` / `#4c566a` | `#bf616a`, `#d08770`, `#ebcb8b`, `#a3be8c`, `#b48ead` | 3.55 |
+  | `tokyonight-night.yaml` (default) | folke/tokyonight.nvim, `night` (= `storm` with `bg`, `bg_dark`, `bg_dark1` overridden) | `#1a1b26` | `#a9b1d6` | `#c0caf5` / `#292e42` | `#7aa2f7`, `#bb9af7`, `#7dcfff`, `#9ece6a`, `#e0af68`, `#ff9e64`, `#f7768e` (text `#16161e`) | 6.80 |
+  | `solarized-dark.yaml` | altercation/solarized | `#002b36` | `#839496` | `#eee8d5` / `#073642` | `#b58900`, `#cb4b16`, `#dc322f`, `#d33682`, `#6c71c4`, `#268bd2`, `#2aa198`, `#859900` | 4.06 |
+
+  Selection colours: `nord` `#e5e9f0` on `#5e81ac` (the template's own); `nord-frost`
+  `#2e3440` on `#ebcb8b`; `nord-aurora` `#2e3440` on `#88c0d0`; `tokyonight-night`
+  `#16161e` on `#c0caf5`; `solarized-dark` `#002b36` on `#eee8d5`.
+
+  Contrast floor: 3.0, the WCAG 2 AA threshold for large text, not 4.5 (normal text).
+  Several palette colours cannot reach 4.5 with any text colour from their own palette —
+  Nord's `#5e81ac` and `#bf616a`, most Solarized accents — and replacing them would no
+  longer be the palette. Edges are held to the same 3.0 (WCAG's floor for non-text
+  graphics), which is why `tokyonight-night` uses `fg_dark` rather than `comment` (2.76)
+  and `solarized-dark` uses `base0` rather than `base01` (2.79).
+
+- Tasks:
+  - [x] `jiyuu/assets/themes/*.yaml`: the five files above, plus a `README.md` in that
+        directory listing each palette's source repository and licence (Nord MIT, Tokyo
+        Night Apache-2.0, Solarized MIT).
+  - [x] `jiyuu/theme.py` (no Flet import):
+
+    ```python
+    @dataclass(frozen=True)
+    class Colors:
+        text: str
+        background: str
+
+    @dataclass(frozen=True)
+    class Theme:
+        name: str
+        canvas: str
+        edge: str
+        selection: Colors
+        root: Colors
+        levels: tuple[Colors, ...]
+
+        def for_depth(self, depth: int) -> Colors: ...   # root at 0, cycling levels after
+
+    class ThemeError(ValueError): ...           # a theme file that cannot be used
+
+    DEFAULT_THEME = "tokyonight-night"
+    def available_themes() -> list[str]: ...    # bundled file stems, sorted
+    def load_theme(name_or_path: str) -> Theme: ...
+    ```
+    `load_theme` accepts a bundled theme's name or a path to any `.yaml` file, so a user
+    can write their own. It raises `ThemeError` naming the file and the key for: a missing
+    key, a colour that is not `#rrggbb`, an empty `levels`, or a file that is not a YAML
+    mapping.
+  - [x] `pyproject.toml` `include` lists the theme files.
+  - [x] `scripts/demo_viewer.py --theme <name>`: draws with the named theme (canvas, node
+        colours by depth, edges and borders), defaulting to `nord`.
+- Tests:
+  - [x] Every bundled theme loads, and `available_themes()` lists exactly the five.
+  - [x] `for_depth`: `0` is `root`; `1` is `levels[0]`; `len(levels) + 1` cycles back to
+        `levels[0]`.
+  - [x] Every text/background pair in every bundled theme (root, levels, selection) has a
+        contrast ratio of at least 3.0, and so does every theme's edge against its canvas.
+  - [x] `ThemeError` for each of: missing key, bad colour, empty `levels`, non-mapping file.
+  - [x] A theme loaded from a path outside the package works the same as a bundled one.
+- Done when: the tests above pass, and the user has looked at `scripts/demo_viewer.py`
+  under each of the five themes. **Met**: 62 tests pass, 100% coverage of `jiyuu/theme.py`;
+  the user chose `tokyonight-night` as the default after trying them.
+
 ### Step 5: Viewer window
 
 - [ ] Status: `todo`
-- Depends on: 1, 3, 4.
+- Depends on: 1, 3, 4, 4.5.
 - Tasks:
   - [ ] `jiyuu/ui/app.py`: `flet.app(target=build)`, where `build(page)` creates one
         `AppState` (current `MindMap`, current `dict[Node, Rect]`/`list[Edge]` from
@@ -992,6 +1094,8 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
   - [ ] "Centre on root", bound to Escape: resets pan/zoom so the root's `Rect` is centred
         in the viewport at 100%.
   - [ ] The window title is `"{file name} — jiyuu"`.
+  - [ ] Every colour drawn comes from the active `Theme` (step 4.5), selected with
+        `jiyuu open --theme <name>`; no colour constant appears in `jiyuu/ui/` itself.
 - Tests: the automated tests in this step cover only the non-UI helpers it adds, if any
   (e.g. a pure function mapping a file extension to a reader). Everything else is a manual
   checklist, ticked by the user:

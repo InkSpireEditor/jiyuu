@@ -115,6 +115,8 @@ poetry run ty check
   import `flet`.
 - `jiyuu/formats/` — `.ink` grammar, `.mm` reading/writing, markdown export.
 - `jiyuu/ui/` — the only place `flet` is imported.
+- `jiyuu/assets/` — the bundled font and the colour themes (`themes/*.yaml`). Every colour
+  drawn comes from a theme file; none is written as a constant in UI code.
 - `tests/`, `tests/data/` — fixtures and hand-written test vectors.
 
 ## `.ink` format

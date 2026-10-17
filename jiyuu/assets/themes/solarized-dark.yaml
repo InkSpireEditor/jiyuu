@@ -1,0 +1,18 @@
+# Solarized dark: base03 background, the eight accent colours in Solarized's own order for
+# node levels. Each level's text is base03 or base3, whichever contrasts more with it. Edges
+# use base0 rather than base01, whose contrast against base03 is 2.79.
+name: Solarized Dark
+credits: Solarized, https://github.com/altercation/solarized (MIT)
+canvas: "#002b36"
+edge: "#839496"
+selection: {text: "#002b36", background: "#eee8d5"}
+root: {text: "#eee8d5", background: "#073642"}
+levels:
+  - {text: "#002b36", background: "#b58900"}
+  - {text: "#fdf6e3", background: "#cb4b16"}
+  - {text: "#fdf6e3", background: "#dc322f"}
+  - {text: "#fdf6e3", background: "#d33682"}
+  - {text: "#fdf6e3", background: "#6c71c4"}
+  - {text: "#002b36", background: "#268bd2"}
+  - {text: "#002b36", background: "#2aa198"}
+  - {text: "#002b36", background: "#859900"}

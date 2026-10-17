@@ -4,14 +4,18 @@ Each step that produces something visually meaningful is meant to extend what th
 shows — folding once editing exists, an `.ink` file once that reader exists too — rather
 than deferring everything visual to the dedicated viewer and editor steps. It is drawn the
 way `scripts/flet_check.py` already confirmed works: one `Container` per node on a `Stack`
-inside an `InteractiveViewer`, with edges as cubic Bézier curves on a `Canvas` beneath it.
+inside an `InteractiveViewer`, with edges as cubic Bézier curves on a `Canvas` beneath it,
+in the colours of one of `jiyuu.theme`'s themes.
 
-    poetry run python scripts/demo_viewer.py              # a fixed example tree
-    poetry run python scripts/demo_viewer.py path/to.mm   # a real Freeplane/FreeMind map
+    poetry run python scripts/demo_viewer.py                      # a fixed example tree
+    poetry run python scripts/demo_viewer.py path/to.mm           # a real Freeplane map
+    poetry run python scripts/demo_viewer.py --theme nord-frost   # any bundled theme name,
+                                                                  # or a path to a .yaml one
 """
 
 from __future__ import annotations
 
+import argparse
 import sys
 
 import flet as ft
@@ -21,6 +25,7 @@ from jiyuu.formats import mm
 from jiyuu.layout import Edge, LayoutSettings, Rect, layout
 from jiyuu.measure import DEFAULT_FONT_PATH, DEFAULT_FONT_SIZE, PillowMeasurer
 from jiyuu.model import Node
+from jiyuu.theme import DEFAULT_THEME, Theme, ThemeError, available_themes, load_theme
 
 FONT_FAMILY = "DejaVu Sans"
 #: Blank space kept around the laid-out tree so no box touches the canvas's own edge.
@@ -29,29 +34,44 @@ MARGIN = 40.0
 
 def _example_tree() -> Node:
     """The example tree used throughout jiyuu's design: `Project`, forking into `Goals`
-    (right) with three children, and `Risks` (left) with one."""
+    (right) with three children, and `Risks` (left) with one — deep enough to show the
+    root and three depth levels of a theme."""
     goals = Node(
         text="Goals",
         side="right",
-        children=[Node(text="I/O"), Node(text="TODO"), Node(text="TODO")],
+        children=[
+            Node(text="I/O", children=[Node(text="Sockets")]),
+            Node(text="TODO"),
+            Node(text="TODO"),
+        ],
     )
     risks = Node(text="Risks", side="left", children=[Node(text="Flet performance")])
     return Node(text="Project", children=[goals, risks])
 
 
-def _tree_to_show() -> Node | None:
-    """The tree to draw: a `.mm` file named on the command line, or the example tree if
-    none was given. Prints any warnings from reading a real file, and `None` if it could
-    not be read into a tree at all — the caller's cue not to open a window at all."""
-    if len(sys.argv) <= 1:
+def _tree_to_show(path: str | None) -> Node | None:
+    """The tree to draw: the `.mm` file at `path`, or the example tree if `path` is `None`.
+    Prints any warnings from reading a real file, and returns `None` if it could not be read
+    into a tree at all — the caller's cue not to open a window."""
+    if path is None:
         return _example_tree()
-
-    path = sys.argv[1]
     with open(path, encoding="utf-8") as handle:
         mindmap, warnings = mm.read(handle.read())
     for warning in warnings:
         print(f"{path}: {warning}")
     return mindmap.root if mindmap is not None else None
+
+
+def _depths(root: Node) -> dict[Node, int]:
+    """Every node's distance from `root`, which picks its colours from the theme."""
+    depths = {root: 0}
+    pending = [root]
+    while pending:
+        node = pending.pop()
+        for child in node.children:
+            depths[child] = depths[node] + 1
+            pending.append(child)
+    return depths
 
 
 def _shift_into_view(rects: dict[Node, Rect]) -> tuple[dict[Node, Rect], float, float]:
@@ -73,7 +93,7 @@ def _shift_into_view(rects: dict[Node, Rect]) -> tuple[dict[Node, Rect], float, 
     return shifted, width, height
 
 
-def _edge_path(edge: Edge, rects: dict[Node, Rect], settings: LayoutSettings) -> cv.Path:
+def _edge_path(edge: Edge, rects: dict[Node, Rect], settings: LayoutSettings, color: str) -> cv.Path:
     """One edge as a cubic Bézier curve from the parent's facing edge to the child's near
     edge, bulging horizontally by half of the gap `layout` left between them."""
     parent, child = rects[edge.parent], rects[edge.child]
@@ -92,45 +112,53 @@ def _edge_path(edge: Edge, rects: dict[Node, Rect], settings: LayoutSettings) ->
             cv.Path.MoveTo(*start),
             cv.Path.CubicTo(control_1[0], control_1[1], control_2[0], control_2[1], *end),
         ],
-        paint=ft.Paint(color=ft.Colors.GREY_600, style=ft.PaintingStyle.STROKE, stroke_width=2),
+        paint=ft.Paint(color=color, style=ft.PaintingStyle.STROKE, stroke_width=2),
     )
 
 
-def _build_main(root: Node):
-    """A Flet `main` callback that lays out and draws `root`.
+def _build_main(root: Node, theme: Theme):
+    """A Flet `main` callback that lays out and draws `root` in `theme`'s colours.
 
-    A closure over `root` rather than a module-level global: `root` is only known once
-    `_tree_to_show` has run, which happens before `ft.run` is ever called (see `__main__`
-    below), specifically so a file that cannot be read never gets as far as opening a
-    window at all — destroying one before it has finished mounting, which was tried first,
+    A closure over `root` and `theme` rather than module-level globals: both are only known
+    once the command line has been read and the file loaded, which happens before `ft.run`
+    is ever called (see `__main__` below), so that a file that cannot be read never gets as
+    far as opening a window — destroying one before it has finished mounting, tried first,
     crashes the GTK embedding this runs under.
     """
 
     def main(page: ft.Page) -> None:
-        page.title = "jiyuu — demo viewer"
+        page.title = f"jiyuu — demo viewer — {theme.name}"
         page.fonts = {FONT_FAMILY: DEFAULT_FONT_PATH}
+        page.bgcolor = theme.canvas
 
         measurer = PillowMeasurer(DEFAULT_FONT_PATH, DEFAULT_FONT_SIZE)
         settings = LayoutSettings()
         rects, edges = layout(root, measurer, settings)
         rects, width, height = _shift_into_view(rects)
+        depths = _depths(root)
 
-        boxes: list[ft.Control] = [
-            ft.Container(
-                content=ft.Text(node.text, font_family=FONT_FAMILY, size=DEFAULT_FONT_SIZE),
-                left=rect.x,
-                top=rect.y,
-                width=rect.width,
-                height=rect.height,
-                bgcolor=ft.Colors.BLUE_50,
-                border=ft.Border.all(1, ft.Colors.BLUE_300),
-                border_radius=6,
-                alignment=ft.Alignment.CENTER,
+        boxes: list[ft.Control] = []
+        for node, rect in rects.items():
+            colors = theme.for_depth(depths[node])
+            boxes.append(
+                ft.Container(
+                    content=ft.Text(
+                        node.text, font_family=FONT_FAMILY, size=DEFAULT_FONT_SIZE, color=colors.text
+                    ),
+                    left=rect.x,
+                    top=rect.y,
+                    width=rect.width,
+                    height=rect.height,
+                    bgcolor=colors.background,
+                    border=ft.Border.all(1, theme.edge),
+                    border_radius=6,
+                    alignment=ft.Alignment.CENTER,
+                )
             )
-            for node, rect in rects.items()
-        ]
         canvas = cv.Canvas(
-            [_edge_path(edge, rects, settings) for edge in edges], width=width, height=height
+            [_edge_path(edge, rects, settings, theme.edge) for edge in edges],
+            width=width,
+            height=height,
         )
         stack = ft.Stack([canvas, *boxes], width=width, height=height)
         page.add(
@@ -157,8 +185,25 @@ def _build_main(root: Node):
     return main
 
 
+def _arguments() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Draw a mind map with jiyuu's layout.")
+    parser.add_argument("path", nargs="?", help="a .mm file to draw (default: an example tree)")
+    parser.add_argument(
+        "--theme",
+        default=DEFAULT_THEME,
+        help=f"a bundled theme ({', '.join(available_themes())}) or a path to a .yaml theme",
+    )
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    _root = _tree_to_show()
+    _args = _arguments()
+    try:
+        _theme = load_theme(_args.theme)
+    except ThemeError as _error:
+        print(_error, file=sys.stderr)
+        sys.exit(1)
+    _root = _tree_to_show(_args.path)
     if _root is None:
         sys.exit(1)
-    ft.run(_build_main(_root))
+    ft.run(_build_main(_root, _theme))

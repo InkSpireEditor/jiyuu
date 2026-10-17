@@ -1,0 +1,12 @@
+# Nord's Frost colours (nord7 to nord10) for node levels, on Nord's Polar Night background.
+name: Nord Frost
+credits: Nord, https://github.com/nordtheme/nord (MIT)
+canvas: "#2e3440"
+edge: "#d8dee9"
+selection: {text: "#2e3440", background: "#ebcb8b"}
+root: {text: "#eceff4", background: "#4c566a"}
+levels:
+  - {text: "#2e3440", background: "#8fbcbb"}
+  - {text: "#2e3440", background: "#88c0d0"}
+  - {text: "#2e3440", background: "#81a1c1"}
+  - {text: "#eceff4", background: "#5e81ac"}

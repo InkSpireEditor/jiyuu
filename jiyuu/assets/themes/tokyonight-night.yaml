@@ -1,0 +1,16 @@
+# Tokyo Night's "night" style: its "storm" palette with bg, bg_dark and bg_dark1 replaced.
+# Edges use fg_dark rather than comment, whose contrast against bg is 2.76.
+name: Tokyo Night
+credits: Tokyo Night, https://github.com/folke/tokyonight.nvim (Apache-2.0)
+canvas: "#1a1b26"
+edge: "#a9b1d6"
+selection: {text: "#16161e", background: "#c0caf5"}
+root: {text: "#c0caf5", background: "#292e42"}
+levels:
+  - {text: "#16161e", background: "#7aa2f7"}
+  - {text: "#16161e", background: "#bb9af7"}
+  - {text: "#16161e", background: "#7dcfff"}
+  - {text: "#16161e", background: "#9ece6a"}
+  - {text: "#16161e", background: "#e0af68"}
+  - {text: "#16161e", background: "#ff9e64"}
+  - {text: "#16161e", background: "#f7768e"}
