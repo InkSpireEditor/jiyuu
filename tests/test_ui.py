@@ -191,8 +191,9 @@ class _Task:
     """Stands in for a task started by `run_task`: records whether it was cancelled, and
     whether a test has run it."""
 
-    def __init__(self, handler: object) -> None:
+    def __init__(self, handler: object, args: tuple[object, ...] = ()) -> None:
         self.handler = handler
+        self.args = args
         self.cancelled = False
         self.ran = False
 
@@ -216,9 +217,9 @@ class _Page:
         """Records `controls` as one update."""
         self.updates.append(controls)
 
-    def run_task(self, handler: object) -> _Task:
+    def run_task(self, handler: object, *args: object) -> _Task:
         """Records `handler` as one task to run, without running it."""
-        task = _Task(handler)
+        task = _Task(handler, args)
         self.tasks.append(task)
         return task
 
@@ -599,7 +600,7 @@ def test_f2_opens_a_field_over_the_node_holding_its_text_selected() -> None:
     assert (box.left, box.top, box.height) == (rect.x, rect.y, rect.height)
     assert box.width == max(rect.width, MIN_FIELD_WIDTH)
     assert page.updates == [(window.surface,)]
-    assert page.handlers()[-1] == field.focus
+    assert page.handlers()[-1] == window._focus_field and page.tasks[-1].args == (field,)  # pylint: disable=protected-access
 
 
 def test_typing_a_character_opens_the_field_holding_only_that_character() -> None:
@@ -630,7 +631,7 @@ def test_enter_in_the_field_renames_the_node_and_lays_the_map_out_again() -> Non
     assert window.text_edit is None
     assert window.surface.controls == [window.layer]
     assert page.updates == [(window.layer, window.surface)]
-    assert field.focus in page.handlers()
+    assert (field,) in [task.args for task in page.tasks]
     assert cast(ft.KeyboardListener, window.keyboard).focus in page.handlers()
     assert "Goals and more" in [text.value for _, _, text in _boxes(window.drawing)]
 
@@ -918,3 +919,23 @@ def test_the_check_drops_a_save_waiting_to_happen(tmp_path: Path) -> None:
     window.saving.check_disk()
     saves = [task for task in page.tasks if getattr(task.handler, "__name__", "") == "later"]
     assert all(task.cancelled for task in saves)
+
+
+def test_a_field_closed_before_it_gets_the_keyboard_is_not_focused(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Opening the field asks for the keyboard once the field is on screen; if the field
+    was closed by then, nothing is asked of it."""
+    root, goals, _ = _tree()
+    window, page = _window(root)
+    window.select(goals)
+    _press(window, "F2")
+    field = _editing(window).field
+    focused: list[ft.TextField] = []
+
+    async def focus(self: ft.TextField) -> None:
+        focused.append(self)
+
+    monkeypatch.setattr(ft.TextField, "focus", focus)
+    asyncio.run(window._focus_field(field))  # pylint: disable=protected-access
+    _press(window, "Escape")
+    asyncio.run(window._focus_field(field))  # pylint: disable=protected-access
+    assert focused == [field]

@@ -41,3 +41,10 @@ def test_pillow_measurer_measures_each_text_once(monkeypatch: pytest.MonkeyPatch
     first = measurer.size_of("Project")
     monkeypatch.setattr(measurer._font, "getbbox", None)  # pylint: disable=protected-access
     assert measurer.size_of("Project") == first
+
+
+def test_pillow_measurer_gives_every_text_the_font_s_line_height() -> None:
+    """Empty text, low characters and tall ones are all as tall as one line of the font
+    (DejaVu Sans at 16: ascent 15 plus descent 4), whatever height their shapes cover."""
+    measurer = PillowMeasurer()
+    assert {measurer.size_of(text)[1] for text in ("", "...", "aaa", "Project", "Ag")} == {19}

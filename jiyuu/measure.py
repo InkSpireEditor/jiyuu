@@ -43,10 +43,18 @@ class PillowMeasurer:
         self, font_path: str | PathLike[str] = DEFAULT_FONT_PATH, size: float = DEFAULT_FONT_SIZE
     ) -> None:
         self._font = ImageFont.truetype(font_path, size)
+        ascent, descent = self._font.getmetrics()
+        self._line_height: float = ascent + descent
         self._sizes: dict[str, tuple[float, float]] = {}
 
     def size_of(self, text: str) -> tuple[float, float]:
         """`(width, height)` Pillow predicts for `text` in this font.
+
+        The width is that of the text's own shapes. The height is the font's line height —
+        its ascent plus its descent — whatever the characters are, rather than the height
+        their shapes cover: so every node with one line of text gets a box of the same
+        height, and a node with no text yet, or with only low characters such as `...`,
+        still has room for a text field to type into it.
 
         An empty string is measured as a single space instead of as nothing, so a node with
         no text yet — one just created, waiting to be typed into — still gets a box with
@@ -54,8 +62,8 @@ class PillowMeasurer:
         """
         size = self._sizes.get(text)
         if size is None:
-            left, top, right, bottom = self._font.getbbox(text or " ")
-            size = self._sizes[text] = (right - left, bottom - top)
+            left, _, right, _ = self._font.getbbox(text or " ")
+            size = self._sizes[text] = (right - left, self._line_height)
         return size
 
 

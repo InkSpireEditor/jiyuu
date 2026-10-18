@@ -280,7 +280,13 @@ class MapWindow:
         self.page.update(self.surface)
         # The field is asked for the keyboard once it is on screen: `autofocus` alone does
         # not give it the keyboard when the field is added to a page already shown.
-        self.page.run_task(field.focus)
+        self.page.run_task(self._focus_field, field)
+
+    async def _focus_field(self, field: ft.TextField) -> None:
+        """Gives `field` the keyboard, unless it was closed in the meantime: a closed field
+        is no longer on the page, and Flet raises when asked to focus it."""
+        if self.text_edit is not None and self.text_edit.field is field:
+            await field.focus()
 
     def finish_editing(self, keep: bool) -> None:
         """Closes the text field, if one is open, and gives the keyboard back to the window.

@@ -62,6 +62,7 @@ Status values: `todo`, `in progress`, `done`, `blocked: <reason>`.
 | `jiyuu/cli.py` defines an empty `@app.callback()` alongside `version` | Typer collapses a `Typer()` app with exactly one registered command into that command itself, invoked with no name; the callback keeps `version` (and every command added later) addressed by name, e.g. `jiyuu version` |
 | `.github/workflows/pylintrc` disables `unexpected-keyword-arg` (E1123) and `too-many-function-args` (E1121) | Confirmed by direct test: astroid cannot infer that Flet's `@control`-decorated classes behave like dataclasses, so every Flet control call with arguments is a false positive (even `flet.Text("hi", size=16)` alone triggers both). `ty check`, run on every change alongside pylint, infers this correctly and is kept as the real check for this error class |
 | Rendering approach confirmed (step 1): one `Container` per node on a `Stack` inside an `InteractiveViewer`, text measured with Pillow and padded by `LayoutSettings.pad_x`/`pad_y` | Step 1's checks B and C passed against this approach with real measurements; no fallback needed |
+| Every node's box is as tall as one line of the font (ascent plus descent), whatever its characters (after step 12) | A height from the characters' shapes made an empty node's box too short to type into, and boxes differ in height by their letters |
 | Font: DejaVu Sans, size 16 by default | Step 1 confirmed its licence (Bitstream Vera, permissive; DejaVu's own changes public domain) permits bundling, and measured its rendered width against Pillow's prediction |
 | Redo is also bound to Ctrl+Shift+Z, alongside Ctrl+Y | Step 1's keyboard check: confirmed as this desktop's own convention, and as a distinct, reliably-reported `(key="Z", shift=True, ctrl=True)` event |
 | `Node` is `@dataclass(eq=False)`: compared and hashed by identity, not by field values | Same-text sibling disambiguation and `dict[Node, Rect]` (step 3) both need this; default dataclass equality would make two structurally identical siblings collide and would make `Node` unhashable |
@@ -1711,6 +1712,14 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
           and takes any other one-character name as is. A key whose shifted character
           differs from its name (on an AZERTY keyboard, the digit row) can start the field
           with the wrong first character; every later character is typed by the field.
+        - After step 12: a new node's field was cut off. `PillowMeasurer.size_of` gave a
+          text the height its characters' shapes cover, 0 px for empty text (measured as
+          a space), so a new node's box was 16 px tall, its padding alone, and the field
+          needs about 25 px. Every text is now measured at the font's line height (ascent
+          plus descent, 19 px for DejaVu Sans at 16), so every box is 35 px tall, empty or
+          not. Checked in a capture of `worked-example.ink`. The field's request for the
+          keyboard is also skipped when the field closed before it ran; Flet raises when
+          asked to focus a control no longer on the page.
         - Insert, Tab and Enter open the field on the new node. Escape there leaves the new
           node with empty text, as the table says (no `rename`). Naming a new node is its
           own undo entry: the first Ctrl+Z empties its text, the second removes it.
@@ -1749,7 +1758,7 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
 
 ### Step 12: Autosave
 
-- [ ] Status: `in progress`
+- [x] Status: `done (af0f2f3)`
 - Depends on: 9, 11.
 - Conflict handling, end to end:
 
@@ -1862,13 +1871,15 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
 - Done when: the tests above pass, and a manual check confirms the conflict banner appears
   after editing the same file in jiyuu and, separately, in a text editor, in that order.
 - Hand checklist (on a copy of a map):
-  - [ ] An edit in jiyuu reaches the `.ink` file about 1.5 s later.
-  - [ ] Editing the file in a text editor and saving it shows the banner within about a
+  - [x] An edit in jiyuu reaches the `.ink` file about 1.5 s later.
+  - [x] Editing the file in a text editor and saving it shows the banner within about a
         second; "Reload" shows the text editor's version; repeat, "Keep mine" writes
         jiyuu's version over it.
-  - [ ] Opening a `.mm` whose `.ink` already exists: the first edit asks for a name; the
+  - [x] Opening a `.mm` whose `.ink` already exists: the first edit asks for a name; the
         title shows it; the old `.ink` is unchanged.
-  - [ ] Closing the window right after an edit: the terminal names the file saved.
+  - [x] Closing the window right after an edit: the terminal names the file saved.
+  - The user did the hand check and found every row working, after the check every second
+    was added.
 
 ### Step 13: `.mm` export
 
