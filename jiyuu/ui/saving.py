@@ -28,6 +28,7 @@ from ..document import Autosave, Document, changed_on_disk, free_path, keep_mine
 from ..formats import ink
 from ..model import MindMap
 from ..theme import Theme
+from .dialogs import FileNameDialog
 
 #: How often the map's file is checked for changes made by something else, in seconds.
 WATCH_INTERVAL = 1.0
@@ -63,9 +64,7 @@ class Saving:
         self.on_done = on_done
         self.autosave = Autosave(doc, self._schedule, self._show_conflict)
         #: The banner or the file name dialog shown, if any.
-        self.shown: ft.Banner | ft.AlertDialog | None = None
-        #: The field the file name is typed in, while the dialog is shown.
-        self.name_field: ft.TextField | None = None
+        self.shown: ft.Banner | FileNameDialog | None = None
         page.run_task(self._watch)
 
     def changed(self) -> None:
@@ -129,7 +128,7 @@ class Saving:
 
     def _close_shown(self) -> None:
         """Closes the banner or dialog shown, and hands the keyboard back."""
-        self.shown = self.name_field = None
+        self.shown = None
         self.page.pop_dialog()
         self.on_done()
 
@@ -163,64 +162,36 @@ class Saving:
     def _ask_name(self) -> None:
         """Shows a dialog asking for the name of a new `.ink` file to save the map to, in
         the folder of the file it was opened from, suggesting the first free name."""
-        colors = self.theme.root
-        suggestion = free_path(self.doc.source.with_suffix(ink.SUFFIX)).name
-        self.name_field = ft.TextField(
-            value=suggestion,
-            autofocus=True,
-            color=colors.text,
-            cursor_color=colors.text,
-            border_color=self.theme.edge,
-            on_submit=self._save_as,
+        existing = self.doc.source.with_suffix(ink.SUFFIX)
+        self.shown = FileNameDialog(
+            self.page,
+            self.theme,
+            title="Save changes as",
+            message=f"{existing.name} already exists, and may hold changes made earlier. "
+            "Choose a new file for this map's changes.",
+            folder=self.doc.source.parent,
+            suggestion=free_path(existing).name,
+            suffix=ink.SUFFIX,
+            action="Save",
+            on_chosen=self._save_as,
+            on_closed=self._name_dialog_closed,
+            cancellable=False,
         )
-        existing = self.doc.source.with_suffix(ink.SUFFIX).name
-        self.shown = ft.AlertDialog(
-            modal=True,
-            bgcolor=colors.background,
-            title=ft.Text("Save changes as", color=colors.text),
-            content=ft.Column(
-                tight=True,
-                controls=[
-                    ft.Text(
-                        f"{existing} already exists, and may hold changes made earlier. "
-                        "Choose a new file for this map's changes.",
-                        color=colors.text,
-                    ),
-                    self.name_field,
-                ],
-            ),
-            actions=[ft.TextButton(content=ft.Text("Save", color=colors.text), on_click=self._save_as)],
-            on_dismiss=self._on_dismiss,
-        )
-        self.page.show_dialog(self.shown)
+        self.shown.show()
 
-    def _save_as(self, _event: ft.Event) -> None:
-        if self.name_field is None:
-            return
-        name = (self.name_field.value or "").strip()
-        if not name:
-            return
-        path = Path(name)
-        if path.suffix != ink.SUFFIX:
-            path = path.with_name(path.name + ink.SUFFIX)
-        target = self.doc.source.parent / path
+    def _save_as(self, path: Path) -> str | None:
+        """Saves the map to the new file `path`; returns why not, if it could not."""
         try:
-            save_as(self.doc, target)
+            save_as(self.doc, path)
         except FileExistsError:
-            self.name_field.error = f"{target.name} already exists"
-            self.page.update(self.name_field)
-            return
+            return f"{path.name} already exists"
         except OSError as error:
-            self.name_field.error = str(error)
-            self.page.update(self.name_field)
-            return
+            return str(error)
         self.page.title = window_title(self.doc)
-        self._close_shown()
         self.page.update()
+        return None
 
-    def _on_dismiss(self, _event: ft.Event) -> None:
-        # The dialog closed without a name being chosen; it is asked for again at the next
-        # change.
-        if self.shown is not None and isinstance(self.shown, ft.AlertDialog):
-            self.shown = self.name_field = None
-            self.on_done()
+    def _name_dialog_closed(self) -> None:
+        # Without a name chosen, the dialog is shown again at the next change.
+        self.shown = None
+        self.on_done()

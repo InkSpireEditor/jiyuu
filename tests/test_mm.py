@@ -1,10 +1,11 @@
 """Tests for jiyuu's FreeMind/Freeplane `.mm` reader."""
 
 from pathlib import Path
+from xml.etree import ElementTree as StdET
 
 from jiyuu.formats import read_map
-from jiyuu.formats.mm import read
-from jiyuu.model import Node
+from jiyuu.formats.mm import MAP_VERSION, read, write
+from jiyuu.model import MindMap, Node
 
 FIXTURES = Path(__file__).parent / "data" / "mm"
 
@@ -209,3 +210,57 @@ def test_read_map_reports_a_file_that_cannot_be_read(tmp_path: Path) -> None:
     mindmap, warnings = read_map(tmp_path / "missing.mm")
     assert mindmap is None
     assert "cannot be read" in warnings[0].message
+
+
+def _shape(node: Node, depth: int = 0) -> tuple:
+    """`node`'s text, folding, side (first level only) and children, recursively."""
+    side = node.side if depth == 1 else None
+    return (node.text, node.folded, side, [_shape(child, depth + 1) for child in node.children])
+
+
+def _mixed_tree() -> MindMap:
+    """A tree with folding at several depths, both sides, same-text siblings, and text that
+    needs escaping or is outside ASCII."""
+    goals = Node(
+        text="Goals & <aims>",
+        side="right",
+        folded=True,
+        children=[Node(text="Résumé"), Node(text="Foo"), Node(text="Foo", children=[Node(text='"Bar"')])],
+    )
+    risks = Node(text="Risks", side="left", children=[Node(text="Qux", folded=True, children=[Node(text="Baz")])])
+    return MindMap(root=Node(text="Project", children=[goals, risks]))
+
+
+def test_write_then_read_gives_back_the_same_tree() -> None:
+    """Text, folding and first-level sides come back exactly; nothing is reported."""
+    mindmap = _mixed_tree()
+    read_back, warnings = read(write(mindmap))
+    assert warnings == []
+    assert read_back is not None
+    assert _shape(read_back.root) == _shape(mindmap.root)
+
+
+def test_written_file_parses_with_the_standard_library() -> None:
+    """The output is well-formed XML: a `<map>` with Freeplane's version, holding one root
+    `<node>`, every node with a distinct `ID`, and only ASCII characters."""
+    text = write(_mixed_tree())
+    root = StdET.fromstring(text)
+    assert root.tag == "map" and root.get("version") == MAP_VERSION
+    assert [child.tag for child in root] == ["node"]
+    ids = [node.get("ID") for node in root.iter("node")]
+    assert ids == [f"ID_{n}" for n in range(1, 10)]
+    assert text.isascii()
+    assert "&#233;" in text
+
+
+def test_write_marks_folding_and_sides_only_where_they_apply() -> None:
+    """`FOLDED` only on folded nodes; `POSITION` only on first-level nodes, even when a
+    deeper node has a side set."""
+    deep = Node(text="Deep", side="left")
+    mindmap = MindMap(root=Node(text="Project", children=[Node(text="Goals", side="right", children=[deep])]))
+    root = StdET.fromstring(write(mindmap))
+    project = root[0]
+    goals = project[0]
+    assert project.get("FOLDED") is None and project.get("POSITION") is None
+    assert goals.get("POSITION") == "right"
+    assert goals[0].get("POSITION") is None

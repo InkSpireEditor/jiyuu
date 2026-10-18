@@ -1883,7 +1883,7 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
 
 ### Step 13: `.mm` export
 
-- [ ] Status: `todo`
+- [ ] Status: `in progress`
 - Depends on: 9.
 - Reverse of step 4's mapping table:
 
@@ -1894,19 +1894,45 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
   | first-level `Node.side` | `POSITION="right"` / `POSITION="left"` |
   | every node | a synthetic `ID="ID_<n>"`, `n` a simple incrementing counter in body order (not derived from `node_id` — Freeplane's own IDs are a separate namespace with their own format, and reusing jiyuu's hash there would imply a stability guarantee this export does not need) |
 - Tasks:
-  - [ ] `jiyuu/formats/mm.py`, `write(mindmap: MindMap) -> str`: emits
+  - [x] `jiyuu/formats/mm.py`, `write(mindmap: MindMap) -> str`: emits
         `<map version="freeplane 1.9.13">`, then one `<node>` per the table above, nested to
         match the tree, serialised with the standard library's `xml.etree.ElementTree`
         (writing is safe with it; only *reading* untrusted files needs `defusedxml`).
-  - [ ] File → Export as `.mm`, and `jiyuu export --mm <in.ink> <out.mm>`.
+        As built: indented with `ElementTree.indent`, and written as US-ASCII, so a
+        character outside ASCII is a character reference (`&#233;`) that any XML reader
+        decodes the same way, whatever encoding it assumes; no XML declaration, as
+        Freeplane's own files have none.
+  - [x] File → Export as `.mm`, and `jiyuu export --mm <in.ink> <out.mm>`. As built:
+        - The window had no menu: a `MenuBar` with a File menu now sits above the map, in
+          the theme's root colours (`ui/export.py`). Its export item opens a dialog asking
+          for a file name, in the map's folder, prefilled with the first free
+          `<stem>.mm`; a name already in use is refused, since it may be a Freeplane file
+          holding data jiyuu does not read. Flet's `FilePicker` still needs Zenity (step
+          5), so the name is typed. The dialog is shared with step 12's save-as dialog
+          (`ui/dialogs.FileNameDialog`).
+        - `jiyuu export --mm <source> <target>` reads a `.ink` or `.mm`; it refuses an
+          existing `target` unless `--overwrite` is given, and exits non-zero without
+          `--mm`, which step 14's `--md` will sit beside.
 - Tests:
-  - [ ] `mm.read(mm.write(mindmap))` reproduces `mindmap`'s tree, folding and first-level
+  - [x] `mm.read(mm.write(mindmap))` reproduces `mindmap`'s tree, folding and first-level
         sides exactly (IDs and anything else `.mm`-only are expected to differ and are not
-        compared).
-  - [ ] The written file parses with the standard library's `xml.etree.ElementTree` with no
-        error.
+        compared). With folding at several depths, both sides, same-text siblings, and
+        text needing escaping or outside ASCII (`tests/test_mm.py`).
+  - [x] The written file parses with the standard library's `xml.etree.ElementTree` with no
+        error; every node has a distinct `ID`; `POSITION` only on first-level nodes.
+  - [x] `jiyuu export`: writes a `.mm` read back as the same tree; refuses an existing
+        target unless `--overwrite`; needs `--mm` and a readable source (`tests/test_cli.py`).
+  - [x] The File menu's export: suggestion, refusal of an existing file, the file written,
+        the map's own file unchanged; cancelling writes nothing (`tests/test_ui.py`).
+  - [x] Checked in a real window on a copy of `worked-example.ink`: the menu strip is drawn
+        in the theme's colours; the export item's dialog opens and writes the file.
 - Done when: the tests above pass, and Freeplane itself opens a file exported this way
   without complaint (manual check).
+- Hand checklist:
+  - [ ] File → Export as .mm… writes the file; a name already in use is refused; Cancel
+        writes nothing; the map's keys work after the dialog closes.
+  - [ ] Freeplane opens the exported file, with the same text, folding and sides. Freeplane
+        is not installed on this machine, so this is for the user.
 
 ### Step 14: Markdown export
 

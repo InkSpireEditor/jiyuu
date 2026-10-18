@@ -38,6 +38,7 @@ poetry install
 poetry run jiyuu open path/to/map.mm                       # in the default theme
 poetry run jiyuu open path/to/map.ink --theme solarized-dark
 poetry run jiyuu check path/to/map.ink                     # list problems; fails on an error
+poetry run jiyuu export --mm path/to/map.ink path/to/map.mm # write a Freeplane .mm file
 ```
 
 The bundled themes are `tokyonight-night` (the default), `nord`, `nord-frost`, `nord-aurora`
@@ -66,6 +67,10 @@ In the window:
 | Ctrl + the arrow towards the root | Move the selected node up one level; on a node directly under the root, move it to the root's other side |
 | Ctrl+Z | Undo the latest change, folds included |
 | Ctrl+Y, Ctrl+Shift+Z | Redo |
+
+The File menu above the map exports it as a Freeplane `.mm` file, to a new file whose name
+you type; an existing file is never written over. `jiyuu export` does the same from the
+command line, and replaces an existing file only with `--overwrite`.
 
 Changes are saved automatically, 1.5 seconds after the last one, to the `.ink` file the
 map was opened from. A `.mm` file is never written: opening one writes a `.ink` copy beside

@@ -27,7 +27,8 @@ Keys that change the map, each acting on the selected node (see `jiyuu.editing`)
 - Ctrl+Z undoes the latest change, folds included; Ctrl+Y and Ctrl+Shift+Z redo it.
 
 Every change, folds included, is saved to the map's file shortly after it is made (see
-`jiyuu.ui.saving`).
+`jiyuu.ui.saving`). The File menu above the map exports it to other formats (see
+`jiyuu.ui.export`).
 
 Nodes are drawn as shapes on canvases (see `jiyuu.ui.canvas`), which cannot receive a click
 of their own; a click is matched to a node by where it lands on the map.
@@ -69,6 +70,7 @@ from ..navigation import DOWN, HOME, LEFT, RIGHT, UP, Navigator, is_inside
 from ..theme import Theme
 from ..view import View
 from .canvas import CORNER_RADIUS, FONT_FAMILY, MapDrawing
+from .export import file_menu
 from .saving import Saving, window_title
 
 #: How much a Ctrl + two-finger vertical move zooms: each pixel moved multiplies the scale
@@ -173,9 +175,9 @@ class MapWindow:
         self.saving = Saving(page, doc, theme, self.show_map, self.take_keyboard)
 
     def control(self) -> ft.Control:
-        """The window's whole content."""
+        """The window's whole content: the File menu, and the map below it."""
         # The Container is what fills the window: KeyboardListener is not a layout control,
-        # so it cannot be made to expand itself. It also clips the map to the window.
+        # so it cannot be made to expand itself. It also clips the map to its area.
         self.keyboard = ft.KeyboardListener(
             autofocus=True,
             on_key_down=self._on_key_down,
@@ -190,11 +192,21 @@ class MapWindow:
                 ),
             ),
         )
-        return ft.Container(
+        return ft.Column(
             expand=True,
-            bgcolor=self.theme.canvas,
-            clip_behavior=ft.ClipBehavior.HARD_EDGE,
-            content=self.keyboard,
+            spacing=0,
+            controls=[
+                ft.Container(
+                    bgcolor=self.theme.root.background,
+                    content=ft.Row([file_menu(self.page, self.theme, self.saving.doc, self.take_keyboard)]),
+                ),
+                ft.Container(
+                    expand=True,
+                    bgcolor=self.theme.canvas,
+                    clip_behavior=ft.ClipBehavior.HARD_EDGE,
+                    content=self.keyboard,
+                ),
+            ],
         )
 
     def redraw(self) -> None:

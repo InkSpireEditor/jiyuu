@@ -1,4 +1,4 @@
-"""Reads FreeMind/Freeplane `.mm` files.
+"""Reads and writes FreeMind/Freeplane `.mm` files.
 
 A `.mm` file is XML: one `<map>` element holding one `<node>` tree. A node's text comes
 from its `TEXT` attribute, or, failing that, from a `<richcontent TYPE="NODE">` child's
@@ -14,11 +14,17 @@ Parsed with `defusedxml`, never the standard library's `xml.etree.ElementTree` d
 `.mm` file is not a trusted input, and `defusedxml` refuses external entities, external DTD
 references, and in-document entity expansion (the "billion laughs" attack) that the standard
 library's own parser would otherwise allow.
+
+`write` produces a file Freeplane can open: each node's text, folding, and, on a first-level
+node, its side, with an `ID` attribute numbering the nodes in the order they are written.
+The standard library's `xml.etree.ElementTree` builds it; only parsing an untrusted file
+needs `defusedxml`.
 """
 
 from __future__ import annotations
 
-from xml.etree.ElementTree import Element  # type hints only; parsing goes through ET below
+from xml.etree import ElementTree as StdET
+from xml.etree.ElementTree import Element  # parsing goes through ET below, building through StdET
 
 import defusedxml.ElementTree as ET
 from defusedxml.common import DefusedXmlException
@@ -121,3 +127,38 @@ def read(text: str) -> tuple[MindMap | None, list[str]]:
 
     root = _read_node(node_elements[0], depth=0, warnings=warnings)
     return MindMap(root=root), warnings
+
+
+#: The `version` attribute written on `<map>`: the Freeplane release whose format `write`
+#: follows.
+MAP_VERSION = "freeplane 1.9.13"
+
+
+def write(mindmap: MindMap) -> str:
+    """`mindmap` as the text of a `.mm` file.
+
+    Each node becomes a `<node>` with its text as `TEXT`, `FOLDED="true"` if it is folded,
+    and, on a first-level node with a side, `POSITION="left"` or `"right"`; nodes are nested
+    as in the tree. Every node also gets `ID="ID_<n>"`, `n` counting from 1 in the order
+    the nodes are written, since Freeplane expects every node to have one. Metadata jiyuu
+    keeps on a node but has no `.mm` attribute for is not written.
+
+    Characters outside ASCII are written as character references (`&#233;`), which every
+    XML reader decodes the same way whatever encoding it assumes for the file.
+    """
+    root = StdET.Element("map", version=MAP_VERSION)
+    counter = [0]
+
+    def add(parent: Element, node: Node, depth: int) -> None:
+        counter[0] += 1
+        element = StdET.SubElement(parent, "node", TEXT=node.text, ID=f"ID_{counter[0]}")
+        if node.folded:
+            element.set("FOLDED", "true")
+        if depth == 1 and node.side in ("left", "right"):
+            element.set("POSITION", node.side)
+        for child in node.children:
+            add(element, child, depth + 1)
+
+    add(root, mindmap.root, 0)
+    StdET.indent(root)
+    return StdET.tostring(root, encoding="us-ascii").decode("ascii") + "\n"

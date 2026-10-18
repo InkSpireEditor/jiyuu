@@ -8,7 +8,7 @@ from typer.testing import CliRunner
 
 from jiyuu import __version__
 from jiyuu.cli import app
-from jiyuu.formats import ink
+from jiyuu.formats import ink, mm
 from jiyuu.document import Document
 from jiyuu.theme import DEFAULT_THEME, Theme, load_theme
 
@@ -250,3 +250,38 @@ def test_check_prints_mm_problems_with_no_line_number() -> None:
     path = MM_FIXTURES / "freeplane-extras.mm"
     result = runner.invoke(app, ["check", str(path)])
     assert result.stdout.startswith(f"{path}: warning: ")
+
+
+def test_export_writes_a_mm_file_that_reads_back_as_the_same_tree(tmp_path: Path) -> None:
+    source = tmp_path / "map.ink"
+    source.write_text("- Project\n  - Goals\n  - Risks\n", encoding="utf-8")
+    target = tmp_path / "map.mm"
+    result = runner.invoke(app, ["export", "--mm", str(source), str(target)])
+
+    assert result.exit_code == 0
+    exported, _ = mm.read(target.read_text(encoding="utf-8"))
+    assert exported is not None
+    assert [child.text for child in exported.root.children] == ["Goals", "Risks"]
+
+
+def test_export_refuses_an_existing_target_unless_told_to_overwrite(tmp_path: Path) -> None:
+    source = tmp_path / "map.ink"
+    source.write_text("- Project\n", encoding="utf-8")
+    target = tmp_path / "map.mm"
+    target.write_text("<map/>", encoding="utf-8")
+
+    result = runner.invoke(app, ["export", "--mm", str(source), str(target)])
+    assert result.exit_code != 0
+    assert target.read_text(encoding="utf-8") == "<map/>"
+
+    result = runner.invoke(app, ["export", "--mm", "--overwrite", str(source), str(target)])
+    assert result.exit_code == 0
+    assert 'TEXT="Project"' in target.read_text(encoding="utf-8")
+
+
+def test_export_needs_a_format_and_a_readable_source(tmp_path: Path) -> None:
+    source = tmp_path / "map.ink"
+    source.write_text("- Project\n", encoding="utf-8")
+    assert runner.invoke(app, ["export", str(source), str(tmp_path / "out.mm")]).exit_code != 0
+    assert runner.invoke(app, ["export", "--mm", str(tmp_path / "missing.ink"), str(tmp_path / "out.mm")]).exit_code != 0
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["map.ink"]

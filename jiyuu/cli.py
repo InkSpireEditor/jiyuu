@@ -12,7 +12,7 @@ import typer
 
 from . import __version__
 from . import document
-from .formats import describe, ink, read_map
+from .formats import describe, ink, mm, read_map, write_text_atomically
 from .theme import DEFAULT_THEME, ThemeError, available_themes, load_theme
 
 app = typer.Typer()
@@ -47,6 +47,36 @@ def check(path: Path) -> None:
         print(describe(path, problem))
     if mindmap is None or any(problem.level == ink.ERROR for problem in problems):
         raise typer.Exit(code=1)
+
+
+@app.command()
+def export(
+    source: Path,
+    target: Path,
+    to_mm: Annotated[bool, typer.Option("--mm", help="Write a Freeplane .mm file.")] = False,
+    overwrite: Annotated[bool, typer.Option(help="Replace `target` if it already exists.")] = False,
+) -> None:
+    """Write the map in `source` (a `.ink` or `.mm` file) to `target` in another format.
+
+    `--mm` writes a Freeplane `.mm` file (see `formats.mm.write`). `target` is never
+    replaced unless `--overwrite` is given: a `.mm` file may hold Freeplane data that jiyuu
+    does not read, and writing over it would lose that data. Problems reading `source` are
+    printed; one that leaves no map to write exits non-zero, as does a missing format or an
+    existing `target`.
+    """
+    if not to_mm:
+        print("choose a format to export to: --mm", file=sys.stderr)
+        raise typer.Exit(code=1)
+    mindmap, problems = read_map(source)
+    for problem in problems:
+        print(describe(source, problem), file=sys.stderr)
+    if mindmap is None:
+        raise typer.Exit(code=1)
+    if target.exists() and not overwrite:
+        print(f"{target}: already exists; pass --overwrite to replace it", file=sys.stderr)
+        raise typer.Exit(code=1)
+    write_text_atomically(target, mm.write(mindmap))
+    print(f"{target}: written", file=sys.stderr)
 
 
 @app.command("open")

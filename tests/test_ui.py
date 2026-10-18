@@ -11,10 +11,13 @@ import flet.canvas as cv
 import pytest
 
 from jiyuu.document import Document, open_document
+from jiyuu.formats import mm
 from jiyuu.layout import LayoutSettings, Plane, layout
 from jiyuu.measure import FixedMeasurer
 from jiyuu.model import MindMap, Node
 from jiyuu.theme import load_theme
+from jiyuu.ui.dialogs import FileNameDialog
+from jiyuu.ui.export import ask_export
 from jiyuu.ui.app import MIN_FIELD_WIDTH, MapLayer, MapWindow, TextEdit, typed_character
 from jiyuu.ui.canvas import MapDrawing, marker_centre
 
@@ -853,7 +856,7 @@ def test_a_map_with_no_file_asks_for_a_name_at_its_first_change(tmp_path: Path) 
     _press(window, "Insert")
 
     (dialog,) = page.dialogs
-    field = cast(ft.TextField, window.saving.name_field)
+    field = cast(FileNameDialog, window.saving.shown).field
     assert isinstance(dialog, ft.AlertDialog)
     assert field.value == "worked-example-2.ink"
 
@@ -939,3 +942,46 @@ def test_a_field_closed_before_it_gets_the_keyboard_is_not_focused(monkeypatch: 
     _press(window, "Escape")
     asyncio.run(window._focus_field(field))  # pylint: disable=protected-access
     assert focused == [field]
+
+
+def test_the_file_menu_exports_the_map_as_mm_to_a_new_file(tmp_path: Path) -> None:
+    """The File menu's export item asks for a name, suggesting the first free `.mm` beside
+    the map's file; an existing file is refused; a new one is written and read back as
+    the same tree; cancelling writes nothing."""
+    window, page, path = _ink_window(tmp_path)
+    before = path.read_bytes()
+    (tmp_path / "map.mm").write_text("<map/>", encoding="utf-8")
+    strip = cast(ft.Container, cast(ft.Column, window.control()).controls[0])
+    assert strip.bgcolor == THEME.root.background
+    menu = cast(ft.Row, strip.content).controls[0]
+    (file_menu,) = cast(ft.MenuBar, menu).controls
+    (item,) = cast(ft.SubmenuButton, file_menu).controls
+    cast(Callable[[object], None], cast(ft.MenuItemButton, item).on_click)(None)
+
+    (dialog,) = page.dialogs
+    field = cast(ft.AlertDialog, dialog).content
+    text_field = cast(ft.TextField, cast(ft.Column, field).controls[1])
+    assert text_field.value == "map-2.mm"
+
+    text_field.value = "map"
+    _click_button(dialog, "Export")
+    assert text_field.error == "map.mm already exists"
+    assert (tmp_path / "map.mm").read_text(encoding="utf-8") == "<map/>"
+
+    text_field.value = "exported"
+    _click_button(dialog, "Export")
+    assert page.dialogs == []
+    exported, _ = mm.read((tmp_path / "exported.mm").read_text(encoding="utf-8"))
+    assert exported is not None
+    assert [child.text for child in exported.root.children] == ["Goals", "Risks"]
+    assert path.read_bytes() == before
+
+
+def test_cancelling_an_export_writes_nothing(tmp_path: Path) -> None:
+    window, page, _ = _ink_window(tmp_path)
+    dialog = ask_export(
+        cast(ft.Page, page), THEME, window.saving.doc, suffix=".mm", writer=mm.write, on_closed=window.take_keyboard
+    )
+    _click_button(dialog.dialog, "Cancel")
+    assert page.dialogs == []
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["map.ink"]
