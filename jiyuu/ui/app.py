@@ -1,4 +1,5 @@
-"""jiyuu's window: one map, drawn in one theme, that can be panned, zoomed and folded.
+"""jiyuu's window: one map, drawn in one theme, that can be panned, zoomed, folded and
+edited.
 
 Gestures, as they reach this window from a trackpad on Linux:
 
@@ -9,6 +10,17 @@ Gestures, as they reach this window from a trackpad on Linux:
   selected node, and clicking a node selects it; the view pans just enough to keep the
   selected node in the window;
 - clicking the circle beside a node folds or unfolds its branch.
+
+Keys that change the map, each acting on the selected node (see `jiyuu.editing`):
+
+- Insert or Tab adds an empty child, Enter an empty sibling, and the new node is selected;
+- Delete deletes the node and its branch;
+- Ctrl+Up and Ctrl+Down move the node up or down among its siblings;
+- Ctrl and the arrow pointing towards the root moves the node up one level, next to its
+  parent; on a node directly under the root, it moves the node to the root's other side;
+- Ctrl+Z undoes the latest change, folds included; Ctrl+Y and Ctrl+Shift+Z redo it.
+
+Nothing in this window writes the map to a file.
 
 Nodes are drawn as shapes on canvases (see `jiyuu.ui.canvas`), which cannot receive a click
 of their own; a click is matched to a node by where it lands on the map.
@@ -24,15 +36,18 @@ A trackpad pinch is not offered: on the Linux desktop this runs on, it reaches F
 two-finger move whose scale stays at 1, so it cannot be told apart from a pan. Ctrl is
 tracked with a `KeyboardListener` because it reports key releases as well as key presses;
 the page-wide keyboard event reports only presses, and so cannot tell when Ctrl is let go.
+Shift is tracked the same way, since a `KeyboardListener` event carries only the key.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
 import flet as ft
 
+from ..editing import Editor
 from ..layout import Edge, LayoutSettings, Plane, Rect, layout
 from ..measure import DEFAULT_FONT_PATH, PillowMeasurer
 from ..model import MindMap, Node
@@ -57,6 +72,13 @@ NAVIGATION_KEYS = {
     "Arrow Left": LEFT,
     "Arrow Up": UP,
     "Arrow Down": DOWN,
+}
+#: Keys that add a node or delete one, and the `Editor` method each one calls.
+EDIT_KEYS = {
+    "Insert": Editor.add_child,
+    "Tab": Editor.add_child,
+    "Enter": Editor.add_sibling,
+    "Delete": Editor.delete,
 }
 
 
@@ -90,6 +112,8 @@ class MapWindow:
         #: The window area the map is shown in, once its size is known.
         self.window_size: tuple[float, float] | None = None
         self.ctrl_held = False
+        self.shift_held = False
+        self.editor = Editor(mindmap.root)
         self.navigator = Navigator(mindmap.root)
         self.selected = mindmap.root
         #: The map's controls, laid out on the drawing surface.
@@ -147,10 +171,40 @@ class MapWindow:
         """
         if not node.children or node is self.mindmap.root:
             return
-        node.folded = not node.folded
-        if node.folded and is_inside(self.selected, node):
-            self.selected = node
+        self.editor.toggle_fold(node)
+        selected = node if node.folded and is_inside(self.selected, node) else self.selected
+        # The view stays where it is: a fold is often made by clicking a marker far from
+        # the selected node, which should not pan back to it.
+        self.show_change(selected, reveal=False)
+
+    def edit(self, command: Callable[[Editor, Node], Node]) -> None:
+        """Runs `command`, an `Editor` method, on the selected node, and shows the result
+        with the node it returns selected. A command that changed nothing sends nothing."""
+        version = self.editor.version
+        selected = command(self.editor, self.selected)
+        if self.editor.version != version:
+            self.show_change(selected)
+
+    def undo(self) -> None:
+        """Undoes the latest change, and selects the node that was selected before it."""
+        selected = self.editor.undo()
+        if selected is not None:
+            self.show_change(selected)
+
+    def redo(self) -> None:
+        """Makes the latest undone change again, and selects the node it selected."""
+        selected = self.editor.redo()
+        if selected is not None:
+            self.show_change(selected)
+
+    def show_change(self, selected: Node, reveal: bool = True) -> None:
+        """Lays out and redraws the map after a change to its tree, with `selected` selected
+        and, if `reveal`, panned into the window; sends the drawing and the surface."""
+        self.selected = selected
         self.redraw()
+        if reveal and self.window_size is not None:
+            self.view.reveal(self.rects[selected], *self.window_size, REVEAL_MARGIN)
+            self.apply_view()
         self.page.update(self.layer, self.surface)
 
     def select(self, node: Node) -> None:
@@ -215,6 +269,8 @@ class MapWindow:
     def _on_key_down(self, event: ft.KeyDownEvent) -> None:
         if event.key.startswith("Control"):
             self.ctrl_held = True
+        elif event.key.startswith("Shift"):
+            self.shift_held = True
         elif event.key == "Escape":
             self.select(self.navigator.move(self.selected, HOME))
             self.centre_on_root()
@@ -222,21 +278,51 @@ class MapWindow:
             self._on_command_key(event.key)
 
     def _on_key_repeat(self, event: ft.KeyRepeatEvent) -> None:
-        # Holding an arrow key keeps moving; holding Space does not keep refolding.
+        # Holding an arrow key keeps moving the selection, or the node with Ctrl held;
+        # holding any other key does not repeat its command.
         if event.key in NAVIGATION_KEYS:
             self._on_command_key(event.key)
 
     def _on_command_key(self, key: str) -> None:
-        if key in NAVIGATION_KEYS:
+        if self.ctrl_held:
+            self._on_ctrl_key(key)
+        elif key in NAVIGATION_KEYS:
             target = self.navigator.move(self.selected, NAVIGATION_KEYS[key])
             if target is not self.selected:
                 self.select(target)
         elif key == " ":
             self.toggle_fold(self.selected)
+        elif key in EDIT_KEYS:
+            self.edit(EDIT_KEYS[key])
+
+    def _on_ctrl_key(self, key: str) -> None:
+        """Handles `key` pressed with Ctrl held."""
+        if key == "Arrow Up":
+            self.edit(Editor.move_up)
+        elif key == "Arrow Down":
+            self.edit(Editor.move_down)
+        elif key in ("Arrow Left", "Arrow Right") and self.selected is not self.mindmap.root:
+            side = self.navigator.side_of(self.selected)
+            towards_root = LEFT if side == RIGHT else RIGHT
+            if NAVIGATION_KEYS[key] != towards_root:
+                return
+            if self.selected in self.mindmap.root.children:
+                self.edit(lambda editor, node: editor.set_side(node, towards_root))
+            else:
+                self.edit(Editor.promote)
+        elif key == "Z":
+            if self.shift_held:
+                self.redo()
+            else:
+                self.undo()
+        elif key == "Y":
+            self.redo()
 
     def _on_key_up(self, event: ft.KeyUpEvent) -> None:
         if event.key.startswith("Control"):
             self.ctrl_held = False
+        elif event.key.startswith("Shift"):
+            self.shift_held = False
 
 
 def run(mindmap: MindMap, path: Path, theme: Theme) -> None:

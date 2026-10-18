@@ -55,6 +55,15 @@ In the window:
 | Ctrl + two-finger move up or down | Zoom |
 | Click the circle beside a node | Fold or unfold its branch; a folded branch's circle shows how many nodes it hides |
 | Escape | Select the root, and go back to 100% with it in the middle of the window |
+| Insert or Tab | Add an empty child to the selected node |
+| Enter | Add an empty sibling after the selected node |
+| Delete | Delete the selected node and its branch |
+| Ctrl + Up or Down | Move the selected node up or down among its siblings |
+| Ctrl + the arrow towards the root | Move the selected node up one level; on a node directly under the root, move it to the root's other side |
+| Ctrl+Z | Undo the latest change, folds included |
+| Ctrl+Y, Ctrl+Shift+Z | Redo |
+
+Changes made in the window are not saved yet, and a new node's text cannot be typed yet.
 
 ## Development
 

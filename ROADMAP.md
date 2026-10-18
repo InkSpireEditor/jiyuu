@@ -71,6 +71,8 @@ Status values: `todo`, `in progress`, `done`, `blocked: <reason>`.
 | Escape selects the root as well as centring on it; Home is not bound | The user's keyboard has no Home key; Escape already centred on the root |
 | Maps open from the command line only (`jiyuu open <file>`); no in-app File → Open yet | Flet's `FilePicker` needs Zenity on Linux, not installed here; the user chose to defer it |
 | `InteractiveViewer` needs `constrained=False` and a large `boundary_margin` to pan at all around content bigger than the viewport, and `trackpad_scroll_causes_scale=True` so a trackpad's scroll zooms (matching FreeMind) rather than pans | Found by hand in step 3's demo viewer; step 1's check B never exercised real pointer gestures, only the programmatic `.pan`/`.zoom` calls, so this went unnoticed until something used it interactively (step 5 later stopped using `InteractiveViewer` for the window itself; see the next row) |
+| Undo restores recorded values onto the same `Node` objects, not a deep copy of the tree (step 10) | The window keeps each node's shapes by `Node` object; a copied tree would make every shape again, ~0.6 s per undo on a 614-node map |
+| Among the root's children, siblings are the nodes on the same side, for moving and for the selection after a delete (step 10) | Each side is drawn as its own column; Up and Down already move only within one side |
 | The window pans and zooms by setting the map's `left`/`top`/`scale` from a `jiyuu.view.View`, not with `InteractiveViewer` | `InteractiveViewer` can only zoom around its content's top-left corner, so zooming around the pointer took two calls and jittered; found by hand in step 5 |
 
 ## The `.ink` map file
@@ -1508,7 +1510,7 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
 
 ### Step 9.6: Nodes drawn on one canvas
 
-- [ ] Status: `in progress`
+- [x] Status: `done (425c957)`
 - Depends on: 9.5.
 - Purpose: after step 9.5, a pan or a selection on the 614-node map still took ~50 ms for
   the window to answer: Flutter rebuilds every box widget whenever the surface above them
@@ -1531,12 +1533,12 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
         node whose marker is there, else selects the node whose box is there, else does
         nothing. Selecting sends only the selected and previously selected nodes' fill
         and text shapes, and the surface.
-  - [ ] Hand check: on a ~600-node map of the user's own, fully unfolded, pan, zoom, hold
+  - [x] Hand check: on a ~600-node map of the user's own, fully unfolded, pan, zoom, hold
         an arrow key, click nodes and fold markers, fold and unfold a large branch; the text
         sits centred in each box at every zoom level.
 - Tests:
-  - [x] Shapes are kept across draws; a fold makes a branch's shapes transparent and
-        empty, and unfolding restores the same shape objects.
+  - [x] Shapes are kept across draws; a fold gives a branch's shapes zero size and empty
+        text, and unfolding restores the same shape objects.
   - [x] Every colour drawn comes from the theme; the fold marker count is as in step 5.
   - [x] `node_at` and `marker_at` find a node by a point inside its box or marker, and
         nothing at a point outside every box, or on a hidden node.
@@ -1556,6 +1558,7 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
   - The window's text was checked in captures of the placeholder fixture
     `worked-example.ink` at 100% and at 3×: centred in each box, and a folded node's
     count shown in its marker.
+- The user did the hand check and found every action responsive.
 - Results on the same 614-node map, measured as in step 9.5:
 
   | Action | Step 9.5 round trip | Python | Round trip |
@@ -1566,7 +1569,7 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
 
 ### Step 10: Edit commands and undo
 
-- [ ] Status: `todo`
+- [x] Status: `done (39a6143)`
 - Depends on: 2.
 - Tasks — each command below takes the tree and the currently selected node, mutates the
   tree in place, and returns the `Node` that should be selected afterwards (`jiyuu/editing.py`,
@@ -1577,7 +1580,7 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
   | `add_child(node)` | appends a new `Node(text="")` to `node.children`; if `node` is the root and has no first-level children yet, side-balancing (step 3) assigns its side once layout next runs | the new node, ready for the editor to open it for text entry |
   | `add_sibling(node)` | if `node` is the root, same as `add_child(root)`; otherwise inserts a new `Node(text="")` into the parent's `children` right after `node` | the new node |
   | `delete(node)` | if `node` is the root, no-op (the root cannot be deleted); otherwise removes `node` (and its whole subtree) from its parent's `children` | the previous sibling, else the next sibling, else the parent |
-  | `rename(node, text)` | `node.text = text` | `node` |
+  | ~~`rename(node, text)`~~ | ~~`node.text = text`~~ **Moved to step 11**, where the text field that calls it is built | `node` |
   | `move_up(node)` / `move_down(node)` | swaps `node` with its previous/next sibling in the parent's `children`; no-op at either end of the list | `node` |
   | `promote(node)` | moves `node` out of its parent's `children` and into its grandparent's `children`, right after its former parent; no-op if `node` is first-level or the root | `node` |
   | `toggle_fold(node)` | `node.folded = not node.folded`; no-op if `node` has no children | `node` |
@@ -1585,7 +1588,9 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
 
   Each table row above is one function with that exact signature and behaviour; "no-op"
   means the function returns the input node unchanged and records no undo entry (see below).
-  - [ ] Undo/redo by snapshot: before any command except a recorded no-op, deep-copy the
+  - [x] Built as the methods of `editing.Editor(root)`, which also holds the undo and redo
+        stacks, so `editor.add_child(node)` and so on.
+  - [x] Undo/redo by snapshot: before any command except a recorded no-op, deep-copy the
         tree (`copy.deepcopy`, or a hand-written recursive copy of `Node`) onto an undo
         stack capped at 100 entries (oldest dropped first); redo stack cleared on any new
         command. `undo()`/`redo()` swap the live tree with the top of the respective stack.
@@ -1594,16 +1599,50 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
         object, so an undo that swaps in a copied tree makes every node new and rebuilds
         every control once (~0.4 s on a 614-node map, from step 9.5's numbers). Decide at
         the start of this step whether that is acceptable, or whether undo should restore
-        changes onto the existing `Node` objects instead.
+        changes onto the existing `Node` objects instead. **Decided with the user**: undo
+        restores onto the existing `Node` objects. Before each command, every node's text,
+        `folded`, `side` and a copy of its `children` list are recorded (0.13 ms on the
+        614-node map); undo writes them back, so a deleted node comes back as the same
+        object. `undo()` returns the node the command was given, `redo()` the node it
+        returned, for the window to select.
+  - [x] Wired into the window ahead of step 11, which keeps these keys: Insert and Tab
+        (`add_child`), Enter (`add_sibling`), Delete, Ctrl+Up/Down (`move_up`/`move_down`),
+        Ctrl+Z, Ctrl+Y and Ctrl+Shift+Z. Step 11 adds entering the new node's text. Not in
+        step 11's table, added here so that `promote` and `set_side` can be tried: Ctrl and
+        the arrow pointing towards the root promotes the selected node, or on a first-level
+        node moves it to the root's other side. Space and clicking a fold marker go through
+        `toggle_fold`, so a fold can be undone. A command that changes nothing sends nothing
+        to the window (`Editor.version` is unchanged). Nothing is saved: autosave is step 12.
+  - [x] Hand check, on a copy of a map: each key above, including holding Ctrl+Up; undo and
+        redo back and forth over a delete of a large branch. Tab is a risk: step 1 checked it
+        reaches `page.on_keyboard_event`, but the window listens with a `KeyboardListener`,
+        whose focus Tab may move away.
 - Tests:
-  - [ ] Each command in the table, checked individually against a small fixture tree.
-  - [ ] A sequence of several commands, then `undo()` repeatedly back to the start, then
-        `redo()` forward again, checked to match at every step.
-  - [ ] `delete` on the middle sibling of three selects the previous sibling; `delete` on the
+  - [x] Each command in the table, checked individually against a small fixture tree
+        (`tests/test_editing.py`).
+  - [x] A sequence of several commands, then `undo()` repeatedly back to the start, then
+        `redo()` forward again, checked to match at every step, with the selection each
+        returns.
+  - [x] `delete` on the middle sibling of three selects the previous sibling; `delete` on the
         first sibling selects the next one; `delete` on an only child selects the parent.
-  - [ ] `move_up` on the first sibling, and `promote` on a first-level node, are both no-ops
-        and add no undo entry (confirmed by checking the undo stack's length is unchanged).
-- Done when: the tests above pass.
+  - [x] `move_up` on the first sibling, and `promote` on a first-level node, are both no-ops
+        and add no undo entry (confirmed by checking the undo stack's length is unchanged),
+        as are the other no-ops in the table.
+  - [x] Undoing a delete brings back the same `Node` objects; a new command empties the redo
+        stack; the undo stack keeps the latest 100 changes.
+  - [x] In the window (`tests/test_ui.py`): each key above, a key that changes nothing sends
+        nothing, a fold is undone by Ctrl+Z.
+- Done when: the tests above pass, and the hand check. **Met**: the user did the hand check
+  and found every key working.
+- As built, beyond the table:
+  - Among the root's children, a node's siblings are those on its own side, as for Up and
+    Down in step 6: `move_up`/`move_down` swap with the neighbour on the same side, and
+    `delete` selects a neighbour on the same side. Without this, moving a first-level node
+    past a node on the other side would change nothing on screen.
+  - `add_sibling` of a first-level node puts the new node on that node's side;
+    `promote` to the first level puts the node on its former parent's side.
+  - `add_child` unfolds the node it adds to, so the new node, which is selected, is shown.
+  - `set_side` raises `ValueError` for a side other than `"left"` or `"right"`.
 
 ### Step 11: Editor UI
 
@@ -1625,6 +1664,8 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
   | Escape, while editing text | discards the in-progress edit (no `rename` call) |
   | every key from step 6's table | handled exactly as in step 6, and only while **not** editing text |
 - Tasks:
+  - [ ] `editing.Editor.rename(node, text)`: `node.text = text`, returns `node`, recorded for
+        undo like step 10's commands (moved here from step 10).
   - [ ] Text-edit mode: an `ft.TextField` overlaid on the selected node's `Container`,
         pre-filled with its current text (selected, so typing replaces it, for the F2 case)
         or with the single starting character (for the "just start typing" case). While it

@@ -214,6 +214,15 @@ def _press(window: MapWindow, key: str) -> None:
     window._on_key_down(cast(ft.KeyDownEvent, _Key(key)))  # pylint: disable=protected-access
 
 
+def _press_with(window: MapWindow, modifiers: list[str], key: str) -> None:
+    """Presses `key` while holding `modifiers` (such as `"Control Left"`), then lets them go."""
+    for modifier in modifiers:
+        _press(window, modifier)
+    _press(window, key)
+    for modifier in modifiers:
+        window._on_key_up(cast(ft.KeyUpEvent, _Key(modifier)))  # pylint: disable=protected-access
+
+
 def _fill_of(window: MapWindow, node: Node) -> cv.Rect:
     return _box(window.drawing, node.text)[0]
 
@@ -363,3 +372,125 @@ def test_selecting_an_off_screen_node_pans_it_into_view() -> None:
     rect = window.rects[goals]
     left, _ = window.view.to_window(rect.x, rect.y)
     assert 0 <= left <= 800.0
+
+
+def test_insert_tab_and_enter_add_a_node_and_select_it() -> None:
+    """Insert and Tab add a child of the selected node, Enter a sibling; each new node is
+    selected and drawn, and the layer and surface are sent."""
+    root, goals, _ = _tree()
+    window, page = _window(root)
+    window.select(goals)
+    page.updates.clear()
+
+    _press(window, "Insert")
+    child = goals.children[-1]
+    assert window.selected is child and child.text == ""
+    assert child in window.rects
+    assert page.updates == [(window.layer, window.surface)]
+
+    _press(window, "Enter")
+    assert goals.children[-1] is window.selected is not child
+
+    _press(window, "Tab")
+    assert window.selected.text == "" and window.selected in goals.children[-1].children
+
+
+def test_delete_removes_the_selected_node_and_selects_a_neighbour() -> None:
+    root, goals, _ = _tree()
+    window, _ = _window(root)
+    io, todo = goals.children
+    window.select(todo)
+    _press(window, "Delete")
+    assert goals.children == [io]
+    assert window.selected is io
+    assert _colour_of(window, io) == THEME.selection.background
+
+
+def test_a_key_that_changes_nothing_sends_nothing() -> None:
+    """Delete on the root and Ctrl+Up on a first sibling change nothing, so nothing is
+    laid out or sent."""
+    root, goals, _ = _tree()
+    window, page = _window(root)
+    _press(window, "Delete")
+    window.select(goals.children[0])
+    page.updates.clear()
+    _press_with(window, ["Control Left"], "Arrow Up")
+    assert page.updates == []
+    assert window.selected is goals.children[0]
+
+
+def test_ctrl_up_and_down_move_the_selected_node() -> None:
+    root, goals, _ = _tree()
+    window, _ = _window(root)
+    io, todo = goals.children
+    window.select(todo)
+    _press_with(window, ["Control Left"], "Arrow Up")
+    assert goals.children == [todo, io]
+    assert window.selected is todo
+    _press_with(window, ["Control Left"], "Arrow Down")
+    assert goals.children == [io, todo]
+
+
+def test_ctrl_and_the_arrow_towards_the_root_promotes_or_changes_side() -> None:
+    """On the right side, Ctrl+Left moves a node next to its parent; on a first-level node
+    it moves the node to the left side. Ctrl+Right, away from the root, does nothing."""
+    root, goals, risks = _tree()
+    window, _ = _window(root)
+    todo = goals.children[1]
+    window.select(todo)
+    _press_with(window, ["Control Left"], "Arrow Right")
+    assert todo in goals.children
+
+    _press_with(window, ["Control Left"], "Arrow Left")
+    assert root.children == [goals, todo, risks] and todo.side == "right"
+    _press_with(window, ["Control Left"], "Arrow Left")
+    assert todo.side == "left"
+    assert window.selected is todo
+    assert window.rects[todo].x < window.rects[root].x
+
+
+def test_holding_ctrl_and_an_arrow_keeps_moving_the_node() -> None:
+    root, goals, _ = _tree()
+    window, _ = _window(root)
+    io, todo = goals.children
+    window.select(todo)
+    _press(window, "Control Left")
+    window._on_key_repeat(cast(ft.KeyRepeatEvent, _Key("Arrow Up")))  # pylint: disable=protected-access
+    assert goals.children == [todo, io]
+
+
+def test_ctrl_z_undoes_and_ctrl_y_and_ctrl_shift_z_redo() -> None:
+    """Undo puts the deleted node back and selects it again; both redo keys delete it again."""
+    root, goals, _ = _tree()
+    window, _ = _window(root)
+    io, todo = goals.children
+    window.select(todo)
+    _press(window, "Delete")
+
+    _press_with(window, ["Control Left"], "Z")
+    assert goals.children == [io, todo] and window.selected is todo
+    assert todo in window.rects
+    _press_with(window, ["Control Left"], "Y")
+    assert goals.children == [io] and window.selected is io
+
+    _press_with(window, ["Control Left"], "Z")
+    _press_with(window, ["Control Left", "Shift Left"], "Z")
+    assert goals.children == [io]
+    assert not window.shift_held and not window.ctrl_held
+
+
+def test_a_fold_can_be_undone() -> None:
+    root, goals, _ = _tree()
+    window, _ = _window(root)
+    window.select(goals)
+    _press(window, " ")
+    _press_with(window, ["Control Left"], "Z")
+    assert not goals.folded and window.selected is goals
+
+
+def test_undo_with_nothing_to_undo_sends_nothing() -> None:
+    root, _, _ = _tree()
+    window, page = _window(root)
+    _press_with(window, ["Control Left"], "Z")
+    _press_with(window, ["Control Left"], "Y")
+    assert page.updates == []
