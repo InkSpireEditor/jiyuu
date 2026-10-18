@@ -77,3 +77,11 @@ def test_reveal_keeps_the_top_left_of_a_rect_too_big_to_fit() -> None:
     view = View(x=0.0, y=0.0, scale=2.0)
     view.reveal(Rect(1000.0, 10.0, 500.0, 20.0), 800.0, 600.0, margin=20.0)
     assert view.to_window(1000.0, 10.0)[0] == 20.0
+
+
+@pytest.mark.parametrize(("x", "y", "scale"), [(0.0, 0.0, 1.0), (30.0, -10.0, 2.0), (-500.0, 120.0, 0.25)])
+def test_to_content_undoes_to_window(x: float, y: float, scale: float) -> None:
+    """A content point taken to the window and back is the same point, at any offset and
+    scale."""
+    view = View(x=x, y=y, scale=scale)
+    assert view.to_content(*view.to_window(12.0, -40.0)) == pytest.approx((12.0, -40.0))

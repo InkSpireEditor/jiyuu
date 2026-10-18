@@ -7,7 +7,11 @@ Gestures, as they reach this window from a trackpad on Linux:
 - Escape selects the root and puts it back in the middle of the window at 100%;
 - the arrow keys move the selection (see `jiyuu.navigation`), Space folds or unfolds the
   selected node, and clicking a node selects it; the view pans just enough to keep the
-  selected node in the window.
+  selected node in the window;
+- clicking the circle beside a node folds or unfolds its branch.
+
+Nodes are drawn as shapes on canvases (see `jiyuu.ui.canvas`), which cannot receive a click
+of their own; a click is matched to a node by where it lands on the map.
 
 Panning, zooming and Escape change a `View` (an offset and a scale, see `jiyuu.view`),
 which is then applied to the map's drawing surface as its `left`, `top` and `scale` in a
@@ -25,6 +29,7 @@ the page-wide keyboard event reports only presses, and so cannot tell when Ctrl 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 import flet as ft
 
@@ -57,11 +62,11 @@ NAVIGATION_KEYS = {
 
 @ft.control("Stack", isolated=True)
 class MapLayer(ft.Stack):
-    """The `Stack` holding every control a map is drawn with.
+    """The `Stack` holding the canvases a map is drawn on.
 
     Declared isolated: when a control above it is updated, Flet does not compare this
-    layer's children for changes, which on a map of several hundred nodes takes around a
-    tenth of a second even when none of them changed. Panning and zooming, which only move
+    layer's children for changes, which on a map of several hundred nodes, with several
+    shapes per node, takes tens of milliseconds even when none of them changed. Panning and zooming, which only move
     the drawing surface above this layer, therefore cost the same on any size of map. A
     change to this layer's children is sent only by updating the layer, or the changed
     controls, directly.
@@ -91,7 +96,7 @@ class MapWindow:
         self.layer = MapLayer()
         #: The map's drawing surface. Its `left`, `top` and `scale` are the view.
         self.surface = ft.Stack(controls=[self.layer])
-        self.drawing = MapDrawing(theme, self.settings, on_select=self.select, on_toggle_fold=self.toggle_fold)
+        self.drawing = MapDrawing(theme, self.settings)
 
     def control(self) -> ft.Control:
         """The window's whole content."""
@@ -108,6 +113,7 @@ class MapWindow:
                 on_key_up=self._on_key_up,
                 content=ft.GestureDetector(
                     on_scale_update=self._on_scale_update,
+                    on_tap_up=self._on_tap_up,
                     content=ft.Stack(
                         controls=[self.surface],
                         on_size_change=self._on_size_change,
@@ -156,7 +162,9 @@ class MapWindow:
         if self.window_size is not None:
             self.view.reveal(self.rects[node], *self.window_size, REVEAL_MARGIN)
             self.apply_view()
-        self.page.update(*recoloured, self.surface)
+        # `Page.update` is annotated as taking `Control`s, but sends any Flet control,
+        # canvas shapes included.
+        self.page.update(*cast(list[ft.Control], recoloured), self.surface)
 
     def centre_on_root(self) -> None:
         """Back to 100%, with the root's box in the middle of the window."""
@@ -185,6 +193,24 @@ class MapWindow:
             self.view.pan(event.focal_point_delta.x, event.focal_point_delta.y)
         self.apply_view()
         self.page.update(self.surface)
+
+    def _on_tap_up(self, event: ft.TapEvent) -> None:
+        if event.local_position is None:
+            return
+        self.tap_at(event.local_position.x, event.local_position.y)
+
+    def tap_at(self, wx: float, wy: float) -> None:
+        """Handles a click at window position `(wx, wy)`: folds or unfolds the node whose
+        fold marker is there, or else selects the node whose box is there, or else does
+        nothing."""
+        x, y = self.view.to_content(wx, wy)
+        marked = self.drawing.marker_at(x, y)
+        if marked is not None:
+            self.toggle_fold(marked)
+            return
+        node = self.drawing.node_at(x, y)
+        if node is not None:
+            self.select(node)
 
     def _on_key_down(self, event: ft.KeyDownEvent) -> None:
         if event.key.startswith("Control"):

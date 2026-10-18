@@ -1442,7 +1442,7 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
 
 ### Step 9.5: Large maps
 
-- [x] Status: `done`
+- [x] Status: `done (7f30c9f)`
 - Depends on: 9.
 - Purpose: a user's own map of 614 nodes, 11 levels deep, fully unfolded, lagged on every
   arrow key, Space press and click. Each one laid the whole map out again and rebuilt every
@@ -1505,6 +1505,64 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
   text and 600 edges all drawn on one canvas cost 17 ms. Drawing the nodes on the canvas is
   step 1's fallback (b); whether to take it is for the user to decide after the hand check.
 - The user did the hand check and found it much better.
+
+### Step 9.6: Nodes drawn on one canvas
+
+- [ ] Status: `in progress`
+- Depends on: 9.5.
+- Purpose: after step 9.5, a pan or a selection on the 614-node map still took ~50 ms for
+  the window to answer: Flutter rebuilds every box widget whenever the surface above them
+  moves. Measured with generated shapes in a real window, with the canvas inside an
+  isolated layer: a pan answers in 7–10 ms and a selection in 9 ms when 800 nodes (a fill,
+  a border and a text each) and 600 edges are all shapes on canvases; moving half the
+  nodes takes 45 ms in Python. Replacing every shape with a new one takes 635 ms, so
+  shapes are kept and changed in place, never made again.
+- Tasks:
+  - [x] `ui/canvas.MapDrawing` draws on three canvases, bottom to top: edges, node boxes
+        (a filled rounded `cv.Rect`, a stroked one for the border, a `cv.Text` centred on
+        the box), fold markers (a `cv.Circle` and a `cv.Text`). Each shape is kept per
+        node, as the controls were in step 9.5. A hidden node's shapes get zero size and
+        empty text (a zero-size rectangle or circle draws nothing, filled or outlined,
+        checked in a window capture); a hidden edge, no elements.
+  - [x] `MapDrawing.node_at(x, y)` and `marker_at(x, y)`: the visible node whose box, or
+        whose fold marker, contains a point of the drawing surface.
+  - [x] `View.to_content(wx, wy)`: the inverse of `to_window`.
+  - [x] `MapWindow`: a tap (`GestureDetector.on_tap_up`) at a window position folds the
+        node whose marker is there, else selects the node whose box is there, else does
+        nothing. Selecting sends only the selected and previously selected nodes' fill
+        and text shapes, and the surface.
+  - [ ] Hand check: on a ~600-node map of the user's own, fully unfolded, pan, zoom, hold
+        an arrow key, click nodes and fold markers, fold and unfold a large branch; the text
+        sits centred in each box at every zoom level.
+- Tests:
+  - [x] Shapes are kept across draws; a fold makes a branch's shapes transparent and
+        empty, and unfolding restores the same shape objects.
+  - [x] Every colour drawn comes from the theme; the fold marker count is as in step 5.
+  - [x] `node_at` and `marker_at` find a node by a point inside its box or marker, and
+        nothing at a point outside every box, or on a hidden node.
+  - [x] `to_content` undoes `to_window` at several scales and offsets.
+  - [x] A tap on a box selects it; on a marker folds it; on empty space does nothing.
+  - [x] A redraw, and selecting a node then the previous one again, keep the very same
+        paint and text style objects on every shape.
+- Done when: the tests pass and the hand check shows no visible delay.
+- As built:
+  - Each paint and text style is made once and reused. Flet sends a paint again, in full,
+    whenever it is replaced by a different object with the same values (checked in a
+    window), which made a fold send 649 KB; reusing them brought it to 238 KB.
+  - `MapDrawing` keeps its own three lists of shapes, which the canvases share and which
+    it changes in place: pylint reads `Canvas.shapes` as a dataclass field rather than a
+    list. `Page.update` is annotated as taking `Control`s; the recoloured shapes are
+    passed to it through a `cast`, with a comment, since it sends any Flet control.
+  - The window's text was checked in captures of the placeholder fixture
+    `worked-example.ink` at 100% and at 3×: centred in each box, and a folded node's
+    count shown in its marker.
+- Results on the same 614-node map, measured as in step 9.5:
+
+  | Action | Step 9.5 round trip | Python | Round trip |
+  |---|---|---|---|
+  | Pan | 53 ms | 0.4 ms | 7–10 ms |
+  | Select | 58 ms | 0.9 ms | 10–11 ms |
+  | Fold / unfold | 173 ms | 63–66 ms | 76–83 ms |
 
 ### Step 10: Edit commands and undo
 

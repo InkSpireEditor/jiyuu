@@ -30,6 +30,11 @@ class View:
         """Where content point `(px, py)` appears in the window."""
         return (self.x + self.scale * px, self.y + self.scale * py)
 
+    def to_content(self, wx: float, wy: float) -> tuple[float, float]:
+        """The content point that appears at window position `(wx, wy)`: the inverse of
+        `to_window`."""
+        return ((wx - self.x) / self.scale, (wy - self.y) / self.scale)
+
     def pan(self, dx: float, dy: float) -> None:
         """Moves everything shown by `(dx, dy)` window pixels."""
         self.x += dx

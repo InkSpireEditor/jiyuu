@@ -1,5 +1,5 @@
 """Tests for the parts of jiyuu's window that can be checked without opening one: which
-controls a map is drawn with, and in which colours."""
+shapes a map is drawn with, in which colours, and what a click or a key does."""
 
 from typing import cast
 
@@ -11,7 +11,7 @@ from jiyuu.measure import FixedMeasurer
 from jiyuu.model import MindMap, Node
 from jiyuu.theme import load_theme
 from jiyuu.ui.app import MapLayer, MapWindow
-from jiyuu.ui.canvas import MapDrawing
+from jiyuu.ui.canvas import MapDrawing, marker_centre
 
 MEASURER = FixedMeasurer(width_per_char=10.0, height=16.0)
 SETTINGS = LayoutSettings()
@@ -25,112 +25,161 @@ def _tree() -> tuple[Node, Node, Node]:
     return Node(text="Project", children=[goals, risks]), goals, risks
 
 
-def _draw(drawing: MapDrawing, root: Node) -> list[ft.Control]:
+def _draw(drawing: MapDrawing, root: Node, selected: Node | None = None) -> None:
     """`root` laid out and drawn by `drawing`, as the window does."""
     rects, edges = layout(root, MEASURER, SETTINGS)
     plane = Plane()
-    rects = plane.fit(rects, margin=40.0)
-    return drawing.draw(root, rects, edges, (plane.width, plane.height))
+    drawing.draw(root, plane.fit(rects, margin=40.0), edges, (plane.width, plane.height), selected)
 
 
-def _drawing() -> MapDrawing:
-    return MapDrawing(THEME, SETTINGS, on_select=lambda node: None, on_toggle_fold=lambda node: None)
+def _drawn(root: Node) -> MapDrawing:
+    """A drawing of `root`."""
+    drawing = MapDrawing(THEME, SETTINGS)
+    _draw(drawing, root)
+    return drawing
 
 
-def _controls(root: Node) -> list[ft.Control]:
-    return _draw(_drawing(), root)
+def _boxes(drawing: MapDrawing) -> list[tuple[cv.Rect, cv.Rect, cv.Text]]:
+    """Each box drawn, as its fill, border and text, in the order they were made."""
+    shapes = drawing.boxes.shapes
+    return [
+        (cast(cv.Rect, shapes[i]), cast(cv.Rect, shapes[i + 1]), cast(cv.Text, shapes[i + 2]))
+        for i in range(0, len(shapes), 3)
+    ]
 
 
-def _text(container: ft.Container) -> ft.Text:
-    return cast(ft.Text, container.content)
+def _box(drawing: MapDrawing, text: str) -> tuple[cv.Rect, cv.Rect, cv.Text]:
+    """The box drawn with `text`."""
+    return next(box for box in _boxes(drawing) if box[2].value == text)
 
 
-def _shown(controls: list[ft.Control]) -> list[ft.Control]:
-    """The controls in `controls` that are visible."""
-    return [control for control in controls if control.visible is not False]
+def _markers(drawing: MapDrawing) -> list[tuple[cv.Circle, cv.Text]]:
+    """Each fold marker drawn, as its circle and its count, in the order they were made."""
+    shapes = drawing.markers.shapes
+    return [(cast(cv.Circle, shapes[i]), cast(cv.Text, shapes[i + 1])) for i in range(0, len(shapes), 2)]
 
 
-def _box(controls: list[ft.Control], text: str) -> ft.Container:
-    """The box in `controls` whose text is `text`."""
-    return next(c for c in controls if isinstance(c, ft.Container) and _text(c).value == text)
+def _paths_drawn(drawing: MapDrawing) -> int:
+    """How many edges are drawn: the paths that have elements."""
+    return sum(1 for shape in drawing.edges.shapes if cast(cv.Path, shape).elements)
 
 
-def test_map_is_one_canvas_then_a_box_per_visible_node_then_its_fold_markers() -> None:
+def test_map_is_drawn_as_edges_then_boxes_then_fold_markers() -> None:
     """A folded node's children get no box; the root and leaves get no fold marker."""
     root, _, _ = _tree()
-    canvas, *rest = _controls(root)
+    drawing = _drawn(root)
 
-    assert isinstance(canvas, cv.Canvas)
     # Project to Goals and to Risks, Goals to its two children; Risks's child is hidden
-    assert len(canvas.shapes) == 4
-    texts = [_text(cast(ft.Container, control)).value for control in rest]
-    # five boxes (Project, Goals, I/O, TODO, Risks), then markers for Goals and Risks only
-    assert texts[:5] == ["Project", "Goals", "I/O", "TODO", "Risks"]
-    assert len(texts) == 7
-    assert _shown(rest) == rest
+    assert len(drawing.edges.shapes) == _paths_drawn(drawing) == 4
+    assert [text.value for _, _, text in _boxes(drawing)] == ["Project", "Goals", "I/O", "TODO", "Risks"]
+    assert len(_markers(drawing)) == 2  # Goals and Risks
 
 
 def test_a_fold_marker_shows_the_hidden_count_only_while_folded() -> None:
     """Folded `Risks` shows `1`, the one node it hides; unfolded `Goals` shows nothing."""
     root, _, _ = _tree()
-    *_, goals_marker, risks_marker = _controls(root)
+    (_, goals_count), (_, risks_count) = _markers(_drawn(root))
 
-    assert _text(cast(ft.Container, goals_marker)).value == ""
-    assert _text(cast(ft.Container, risks_marker)).value == "1"
+    assert goals_count.value == ""
+    assert risks_count.value == "1"
 
 
 def test_every_colour_drawn_comes_from_the_theme() -> None:
-    """Each box is in its depth's colours, its border and every edge in the edge colour."""
+    """Each box is in its depth's colours, its border and every edge in the edge colour,
+    and each fold marker in the edge colour with its count in the canvas colour."""
     root, _, _ = _tree()
-    canvas, project, goals, *_ = _controls(root)
+    drawing = _drawn(root)
+    project_fill, _, project_text = _box(drawing, "Project")
+    goals_fill, _, _ = _box(drawing, "Goals")
 
-    assert cast(ft.Container, project).bgcolor == THEME.root.background
-    assert _text(cast(ft.Container, project)).color == THEME.root.text
-    assert cast(ft.Container, goals).bgcolor == THEME.for_depth(1).background
-    assert all(
-        cast(cv.Path, shape).paint.color == THEME.edge for shape in cast(cv.Canvas, canvas).shapes
-    )
+    assert project_fill.paint.color == THEME.root.background
+    assert cast(ft.TextStyle, project_text.style).color == THEME.root.text
+    assert goals_fill.paint.color == THEME.for_depth(1).background
+    assert all(border.paint.color == THEME.edge for _, border, _ in _boxes(drawing))
+    assert all(cast(cv.Path, shape).paint.color == THEME.edge for shape in drawing.edges.shapes)
+    for circle, count in _markers(drawing):
+        assert circle.paint.color == THEME.edge
+        assert cast(ft.TextStyle, count.style).color == THEME.canvas
 
 
-def test_a_second_draw_reuses_every_control() -> None:
-    """Drawing the same map again gives back the very same controls, not new ones."""
+def test_a_second_draw_keeps_every_shape() -> None:
+    """Drawing the same map again changes the same shapes, rather than making new ones."""
     root, _, _ = _tree()
-    drawing = _drawing()
-    first = _draw(drawing, root)
-    second = _draw(drawing, root)
-    assert all(a is b for a, b in zip(first, second, strict=True))
+    drawing = _drawn(root)
+    before = [list(canvas.shapes) for canvas in (drawing.edges, drawing.boxes, drawing.markers)]
+    _draw(drawing, root)
+    after = [canvas.shapes for canvas in (drawing.edges, drawing.boxes, drawing.markers)]
+    assert all(a is b for old, new in zip(before, after, strict=True) for a, b in zip(old, new, strict=True))
 
 
-def test_a_folded_branch_stays_in_the_drawing_invisible() -> None:
-    """Folding hides a node's children's boxes and edges without taking them out of the
-    drawing; unfolding shows the same boxes again."""
+def test_redrawing_and_reselecting_keep_the_same_paint_objects() -> None:
+    """A redraw, or selecting a node and then the one before it again, leaves every shape
+    with the very paint and text style objects it had: a different object with the same
+    values would be sent to the window again."""
     root, goals, _ = _tree()
-    drawing = _drawing()
-    before = _draw(drawing, root)
-    io_box = _box(before, "I/O")
+    drawing = MapDrawing(THEME, SETTINGS)
+    _draw(drawing, root, selected=root)
+    styles = [(box[0].paint, box[1].paint, box[2].style) for box in _boxes(drawing)]
+
+    _draw(drawing, root, selected=root)
+    drawing.set_selected(root, goals)
+    drawing.set_selected(goals, root)
+    after = [(box[0].paint, box[1].paint, box[2].style) for box in _boxes(drawing)]
+    assert all(a is b for old, new in zip(styles, after, strict=True) for a, b in zip(old, new, strict=True))
+
+
+def test_a_folded_branch_keeps_its_shapes_hidden() -> None:
+    """Folding hides a node's children's boxes and edges, by giving them no size, text
+    or elements, without taking their shapes out; unfolding draws the same shapes again."""
+    root, goals, _ = _tree()
+    drawing = _drawn(root)
+    fill, border, text = _box(drawing, "I/O")
+    shapes = list(drawing.boxes.shapes)
 
     goals.folded = True
-    folded = _draw(drawing, root)
-    assert all(a is b for a, b in zip(folded, before, strict=True))
-    assert io_box.visible is False
-    canvas = cast(cv.Canvas, folded[0])
-    assert sum(1 for shape in canvas.shapes if cast(cv.Path, shape).elements) == 2
+    _draw(drawing, root)
+    assert all(a is b for a, b in zip(drawing.boxes.shapes, shapes, strict=True))
+    assert (fill.width, fill.height, border.width, border.height, text.value) == (0, 0, 0, 0, "")
+    assert _paths_drawn(drawing) == 2
 
     goals.folded = False
-    assert io_box in _shown(_draw(drawing, root))
+    _draw(drawing, root)
+    assert all(a is b for a, b in zip(_box(drawing, "I/O"), (fill, border, text)))
+    assert fill.width > 0 and text.value == "I/O"
+    assert _paths_drawn(drawing) == 4
 
 
-def test_a_node_removed_from_the_tree_loses_its_controls() -> None:
-    """A node no longer in the tree is not drawn, and a new node with the same text gets a
-    box of its own."""
+def test_a_node_removed_from_the_tree_loses_its_shapes() -> None:
+    """A node no longer in the tree has its shapes taken out, and a new node with the same
+    text gets shapes of its own."""
     root, goals, _ = _tree()
-    drawing = _drawing()
-    old_box = _box(_draw(drawing, root), "TODO")
+    drawing = _drawn(root)
+    old = _box(drawing, "TODO")
 
     goals.children[1] = Node(text="TODO")
-    second = _draw(drawing, root)
-    assert _box(second, "TODO") is not old_box
-    assert all(control is not old_box for control in second)
+    _draw(drawing, root)
+    assert len(_boxes(drawing)) == 5
+    assert all(shape is not kept for shape in old for kept in drawing.boxes.shapes)
+
+
+def test_node_at_and_marker_at_find_what_a_point_is_on() -> None:
+    """A point inside a box finds its node, a point on a fold marker finds the marker's
+    node, and a point on nothing, or on a hidden node, finds nothing."""
+    root, goals, _ = _tree()
+    rects, edges = layout(root, MEASURER, SETTINGS)
+    rects = Plane().fit(rects, margin=40.0)
+    drawing = MapDrawing(THEME, SETTINGS)
+    drawing.draw(root, rects, edges, (2000.0, 2000.0))
+    rect, io_rect = rects[goals], rects[goals.children[0]]
+
+    assert drawing.node_at(rect.x + 1, rect.y + rect.height / 2) is goals
+    assert drawing.marker_at(*marker_centre(rect, "right")) is goals
+    assert drawing.node_at(0.0, 0.0) is None and drawing.marker_at(0.0, 0.0) is None
+
+    goals.folded = True
+    rects, edges = layout(root, MEASURER, SETTINGS)
+    drawing.draw(root, Plane().fit(rects, margin=40.0), edges, (2000.0, 2000.0))
+    assert drawing.node_at(io_rect.x + 1, io_rect.y + 1) is None
 
 
 class _Page:
@@ -165,34 +214,41 @@ def _press(window: MapWindow, key: str) -> None:
     window._on_key_down(cast(ft.KeyDownEvent, _Key(key)))  # pylint: disable=protected-access
 
 
-def _box_of(window: MapWindow, node: Node) -> ft.Container:
-    """The drawn box for `node`: the visible box at its rect's position."""
-    rect = window.rects[node]
-    boxes = (cast(ft.Container, control) for control in _shown(window.layer.controls[1:]))
-    return next(box for box in boxes if (box.left, box.top) == (rect.x, rect.y))
+def _fill_of(window: MapWindow, node: Node) -> cv.Rect:
+    return _box(window.drawing, node.text)[0]
+
+
+def _colour_of(window: MapWindow, node: Node) -> str | None:
+    return _fill_of(window, node).paint.color
+
+
+def _click(window: MapWindow, point: tuple[float, float]) -> None:
+    """A click on content point `point`, at the window position the view shows it at."""
+    window.tap_at(*window.view.to_window(*point))
 
 
 def test_window_redraw_fills_the_layer_with_the_map_at_the_view() -> None:
-    """`MapWindow.redraw` lays the map out, puts its controls on the layer, sizes the
-    surface and the layer to the plane it was laid out on, and places the surface where the
-    view says."""
+    """`MapWindow.redraw` lays the map out, puts the canvases on the layer, sizes the
+    surface, the layer and the canvases to the plane it was laid out on, and places the
+    surface where the view says."""
     root, _, _ = _tree()
     window, _ = _window(root)
     window.view.pan(30.0, -10.0)
     window.view.scale = 2.0
     window.redraw()
 
+    drawing = window.drawing
     assert window.surface.controls == [window.layer]
-    assert window.surface.width == window.layer.width == window.plane.width > 0
-    assert window.surface.height == window.layer.height == window.plane.height > 0
-    assert len(window.layer.controls) == 8  # canvas, five boxes, two markers
+    assert window.layer.controls == [drawing.edges, drawing.boxes, drawing.markers]
+    assert window.surface.width == window.layer.width == drawing.boxes.width == window.plane.width > 0
+    assert window.surface.height == window.layer.height == drawing.boxes.height == window.plane.height > 0
     assert (window.surface.left, window.surface.top) == (30.0, -10.0)
     assert cast(ft.Scale, window.surface.scale).scale == 2.0
     assert root in window.rects
 
 
 def test_the_layer_is_isolated_from_updates_to_the_surface() -> None:
-    """Updating the surface does not make Flet compare every control of the map."""
+    """Updating the surface does not make Flet compare every shape of the map."""
     assert MapLayer().is_isolated()
 
 
@@ -204,21 +260,21 @@ def test_arrow_keys_move_the_selection_and_its_colours() -> None:
     _press(window, "Arrow Right")
 
     assert window.selected is goals
-    assert _box_of(window, goals).bgcolor == THEME.selection.background
-    assert _box_of(window, root).bgcolor == THEME.root.background
+    assert _colour_of(window, goals) == THEME.selection.background
+    assert _colour_of(window, root) == THEME.root.background
 
 
 def test_selecting_sends_only_the_two_recoloured_boxes_and_the_surface() -> None:
-    """Selecting a node does not lay the map out or replace any control: the layer keeps
-    the same list, and the update sends the two recoloured boxes and the surface."""
+    """Selecting a node does not lay the map out: the update sends the fill and text of the
+    two recoloured boxes, and the surface."""
     root, goals, _ = _tree()
     window, page = _window(root)
-    controls = window.layer.controls
 
     window.select(goals)
 
-    assert window.layer.controls is controls
-    assert page.updates == [(_box_of(window, root), _box_of(window, goals), window.surface)]
+    root_fill, _, root_text = _box(window.drawing, "Project")
+    goals_fill, _, goals_text = _box(window.drawing, "Goals")
+    assert page.updates == [(root_fill, root_text, goals_fill, goals_text, window.surface)]
 
 
 def test_folding_sends_the_layer_and_the_surface() -> None:
@@ -227,6 +283,37 @@ def test_folding_sends_the_layer_and_the_surface() -> None:
     window, page = _window(root)
     window.toggle_fold(goals)
     assert page.updates == [(window.layer, window.surface)]
+
+
+def test_clicking_a_box_selects_its_node() -> None:
+    """A click inside a node's box selects that node."""
+    root, goals, _ = _tree()
+    window, _ = _window(root)
+    window.view.pan(25.0, 40.0)
+    window.view.scale = 1.5
+    rect = window.rects[goals.children[1]]
+    _click(window, (rect.x + 2, rect.y + 2))
+    assert window.selected is goals.children[1]
+
+
+def test_clicking_a_fold_marker_folds_or_unfolds_its_node() -> None:
+    """A click on a node's fold marker folds it, and a second click unfolds it."""
+    root, goals, _ = _tree()
+    window, _ = _window(root)
+    centre = marker_centre(window.rects[goals], "right")
+    _click(window, centre)
+    assert goals.folded
+    _click(window, centre)
+    assert not goals.folded
+
+
+def test_clicking_empty_space_does_nothing() -> None:
+    """A click on no box and no marker leaves the selection and every fold as they were."""
+    root, _, _ = _tree()
+    window, page = _window(root)
+    _click(window, (1.0, 1.0))
+    assert window.selected is root
+    assert page.updates == []
 
 
 def test_escape_selects_the_root_and_centres_on_it() -> None:
@@ -263,7 +350,7 @@ def test_folding_over_the_selection_moves_it_to_the_folded_node() -> None:
     window.select(goals.children[1])
     window.toggle_fold(goals)
     assert window.selected is goals
-    assert _box_of(window, goals).bgcolor == THEME.selection.background
+    assert _colour_of(window, goals) == THEME.selection.background
 
 
 def test_selecting_an_off_screen_node_pans_it_into_view() -> None:

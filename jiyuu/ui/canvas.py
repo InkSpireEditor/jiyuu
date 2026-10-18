@@ -1,20 +1,32 @@
-"""Turns a laid-out map into Flet controls: node boxes, fold markers, and the edges.
+"""Draws a laid-out map as shapes on canvases: the edges, the node boxes, the fold markers.
 
-Every box is one `Container` at its `Rect`, stacked over a single `Canvas` holding every
-edge as a cubic Bézier curve. Every colour comes from the `Theme` passed in.
+Three canvases are stacked, bottom to top: one holding every edge as a cubic Bézier curve,
+one holding every node's box (a filled rounded rectangle, its border, and its text centred
+on it), and one holding every fold marker (a circle, and the count it shows). Every colour
+comes from the `Theme` passed in.
 
-`MapDrawing` keeps the control it made for each node and reuses it on every later redraw,
-changing only its position, size, text, colours and visibility. A node hidden by a fold keeps
-its controls in the drawing, made invisible, rather than having them taken out. Flet sends a
-control's property to the window only when its value changed, but sends a whole control
-every time it is added to the drawing again; so folding or unfolding a branch of a map of
-several hundred nodes sends which boxes appeared, disappeared or moved, rather than every
-box in the branch.
+Shapes rather than one widget per node: Flutter rebuilds every widget under the drawing
+surface each time the surface moves, so on a map of several hundred nodes a pan or zoom
+took tens of milliseconds to draw with one widget per box. A canvas is one widget however
+many shapes it holds. Clicks are matched to nodes here, by position (`node_at`,
+`marker_at`), since a shape cannot receive a click of its own.
+
+`MapDrawing` keeps the shapes it made for each node and changes them in place on every
+later redraw. Flet sends a property to the window only when its value changed, but sends a
+whole shape each time one is added, which on a map of several hundred nodes takes a large
+part of a second; so a node hidden by a fold keeps its shapes, given no size and no text,
+rather than having them taken out and added back. A rectangle or circle of size zero draws
+nothing, filled or outlined, and setting a size sends two numbers where a new paint would
+send every one of the paint's fields.
+
+Each paint and text style is made once and the same object reused wherever it applies:
+Flet sends a paint or text style again, in full, whenever it is replaced by another object,
+even one with the same values.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from dataclasses import dataclass
 
 import flet as ft
 import flet.canvas as cv
@@ -30,7 +42,9 @@ FONT_FAMILY = "DejaVu Sans"
 MARKER_SIZE = 18.0
 #: Gap between a node's box and its fold marker.
 MARKER_GAP = 2.0
+MARKER_FONT_SIZE = 10
 CORNER_RADIUS = 6
+BORDER_WIDTH = 1
 EDGE_WIDTH = 2
 
 
@@ -52,34 +66,66 @@ def edge_elements(edge: Edge, rects: dict[Node, Rect], settings: LayoutSettings)
     ]
 
 
+def marker_centre(rect: Rect, side: str) -> tuple[float, float]:
+    """The centre of the fold marker of a node whose box is `rect`, on its outer `side`."""
+    if side == "right":
+        x = rect.x + rect.width + MARKER_GAP + MARKER_SIZE / 2
+    else:
+        x = rect.x - MARKER_GAP - MARKER_SIZE / 2
+    return (x, rect.y + rect.height / 2)
+
+
+@dataclass
+class _BoxShapes:
+    """The shapes one node's box is drawn with."""
+
+    fill: cv.Rect
+    border: cv.Rect
+    text: cv.Text
+
+
+@dataclass
+class _MarkerShapes:
+    """The shapes one node's fold marker is drawn with."""
+
+    circle: cv.Circle
+    count: cv.Text
+
+
 class MapDrawing:
-    """The controls a map is drawn with, kept from one redraw to the next.
+    """The canvases a map is drawn on, and the shapes on them, kept from one redraw to the
+    next.
 
     A node's box, fold marker and the edge leading to it are made the first time the node
-    is visible, and kept, keyed by the node, while it stays in the tree. While a fold hides
-    the node, its box and marker are invisible and its edge has no elements, so nothing of
-    it is drawn.
+    is visible, and kept, keyed by the node, while it stays in the tree.
     """
 
-    def __init__(
-        self,
-        theme: Theme,
-        settings: LayoutSettings,
-        *,
-        on_select: Callable[[Node], None],
-        on_toggle_fold: Callable[[Node], None],
-    ) -> None:
+    def __init__(self, theme: Theme, settings: LayoutSettings) -> None:
         self.theme = theme
         self.settings = settings
-        self.on_select = on_select
-        self.on_toggle_fold = on_toggle_fold
-        #: The one canvas every edge is drawn on, under every box.
-        self.canvas = cv.Canvas()
-        self._boxes: dict[Node, ft.Container] = {}
-        self._markers: dict[Node, ft.Container] = {}
+        # Each canvas shares its list of shapes with this drawing, which changes the list in
+        # place; Flet compares a list with what it last sent, so in-place changes are sent.
+        self._edge_list: list[cv.Shape] = []
+        self._box_list: list[cv.Shape] = []
+        self._marker_list: list[cv.Shape] = []
+        self.edges = cv.Canvas(shapes=self._edge_list)
+        self.boxes = cv.Canvas(shapes=self._box_list)
+        self.markers = cv.Canvas(shapes=self._marker_list)
+        self._box_shapes: dict[Node, _BoxShapes] = {}
+        self._marker_shapes: dict[Node, _MarkerShapes] = {}
         #: Each edge's path, keyed by the edge's child: a node has one edge leading to it.
         self._paths: dict[Node, cv.Path] = {}
         self._depths: dict[Node, int] = {}
+        #: The visible nodes' boxes, and the visible fold markers' centres, as last drawn.
+        self._rects: dict[Node, Rect] = {}
+        self._marker_centres: dict[Node, tuple[float, float]] = {}
+        self._edge_paint = self._stroke(EDGE_WIDTH)
+        self._border_paint = self._stroke(BORDER_WIDTH)
+        self._marker_paint = ft.Paint(color=theme.edge)
+        self._count_style = ft.TextStyle(font_family=FONT_FAMILY, size=MARKER_FONT_SIZE, color=theme.canvas)
+        #: Box fills and text styles, by colour, each made the first time it is used.
+        self._fills: dict[str, ft.Paint] = {}
+        self._text_styles: dict[str, ft.TextStyle] = {}
 
     def draw(
         self,
@@ -89,114 +135,149 @@ class MapDrawing:
         size: tuple[float, float],
         selected: Node | None = None,
     ) -> list[ft.Control]:
-        """Every control the map is drawn with, bottom to top: the edges' canvas, then each
-        node's box, then each fold marker, for every node visible now or at any earlier
-        draw that is still in the tree. Only the nodes in `rects` are visible.
+        """The canvases, bottom to top, with every visible node's box, marker and edge drawn
+        where `rects` and `edges` put them, and every other kept shape hidden.
 
         `rects` must already be placed on the drawing surface (see `layout.Plane`); `size` is
         that surface's width and height. The root gets no fold marker: folding it would hide
         the whole map. `selected` is drawn in the theme's selection colours.
         """
         self._depths = depths(root)
-        for kept in (self._boxes, self._markers, self._paths):
-            for node in [node for node in kept if node not in self._depths]:
-                del kept[node]
+        self._forget_nodes_not_in_tree()
+        self._rects = rects
+        self._marker_centres = {}
+        for canvas in (self.edges, self.boxes, self.markers):
+            canvas.width, canvas.height = size
 
-        self.canvas.width, self.canvas.height = size
         for edge in edges:
-            self._path(edge, rects)
+            self._draw_edge(edge, rects)
         sides = {edge.child: edge.side for edge in edges}
         for node, rect in rects.items():
-            self._box(node, rect, node is selected)
+            self._draw_box(node, rect, node is selected)
             if node.children and node is not root:
-                self._marker(node, rect, sides[node])
-            elif node in self._markers:
-                self._markers[node].visible = False
+                self._draw_marker(node, rect, sides[node])
 
         for node, path in self._paths.items():
             if node not in rects:
                 path.elements = []
-        for kept in (self._boxes, self._markers):
-            for node, control in kept.items():
-                if node not in rects:
-                    control.visible = False
+        for node, box in self._box_shapes.items():
+            if node not in rects:
+                for shape in (box.fill, box.border):
+                    shape.width = shape.height = 0
+                box.text.value = ""
+        for node, marker in self._marker_shapes.items():
+            if node not in self._marker_centres:
+                marker.circle.radius = 0
+                marker.count.value = ""
+        return [self.edges, self.boxes, self.markers]
 
-        self.canvas.shapes = list(self._paths.values())
-        return [self.canvas, *self._boxes.values(), *self._markers.values()]
-
-    def set_selected(self, previous: Node | None, selected: Node) -> list[ft.Control]:
+    def set_selected(self, previous: Node | None, selected: Node) -> list[cv.Shape]:
         """Recolours `previous`'s box back to its depth's colours and `selected`'s in the
-        theme's selection colours, leaving every other control as it was; returns the boxes
+        theme's selection colours, leaving every other shape as it was; returns the shapes
         recoloured."""
-        recoloured: list[ft.Control] = []
-        if previous is not None and previous in self._boxes:
-            self._colour(self._boxes[previous], self.theme.for_depth(self._depths[previous]))
-            recoloured.append(self._boxes[previous])
-        self._colour(self._boxes[selected], self.theme.selection)
-        recoloured.append(self._boxes[selected])
-        return recoloured
+        changed: list[cv.Shape] = []
+        if previous is not None and previous in self._rects:
+            changed += self._colour(previous, self.theme.for_depth(self._depths[previous]))
+        changed += self._colour(selected, self.theme.selection)
+        return changed
 
-    def _path(self, edge: Edge, rects: dict[Node, Rect]) -> None:
+    def node_at(self, x: float, y: float) -> Node | None:
+        """The visible node whose box contains point `(x, y)` of the drawing surface, if any."""
+        for node, rect in self._rects.items():
+            if rect.x <= x <= rect.x + rect.width and rect.y <= y <= rect.y + rect.height:
+                return node
+        return None
+
+    def marker_at(self, x: float, y: float) -> Node | None:
+        """The node whose visible fold marker contains point `(x, y)` of the drawing surface,
+        if any."""
+        radius = MARKER_SIZE / 2
+        for node, (cx, cy) in self._marker_centres.items():
+            if (x - cx) ** 2 + (y - cy) ** 2 <= radius**2:
+                return node
+        return None
+
+    def _forget_nodes_not_in_tree(self) -> None:
+        """Drops every kept shape of a node that is no longer in the tree."""
+        stores: list[tuple[dict, list[cv.Shape]]] = [
+            (self._paths, self._edge_list),
+            (self._box_shapes, self._box_list),
+            (self._marker_shapes, self._marker_list),
+        ]
+        for kept, shapes in stores:
+            gone = [node for node in kept if node not in self._depths]
+            if not gone:
+                continue
+            dropped = {id(shape) for node in gone for shape in _shapes_of(kept.pop(node))}
+            shapes[:] = [shape for shape in shapes if id(shape) not in dropped]
+
+    def _draw_edge(self, edge: Edge, rects: dict[Node, Rect]) -> None:
         """Makes `edge`'s path if new, and sets it to follow the edge's current endpoints."""
         elements = edge_elements(edge, rects, self.settings)
         path = self._paths.get(edge.child)
         if path is None:
-            path = self._paths[edge.child] = cv.Path(
-                elements,
-                paint=ft.Paint(color=self.theme.edge, style=ft.PaintingStyle.STROKE, stroke_width=EDGE_WIDTH),
-            )
+            path = self._paths[edge.child] = cv.Path(elements, paint=self._edge_paint)
+            self._edge_list.append(path)
         path.elements = elements
 
-    def _box(self, node: Node, rect: Rect, selected: bool) -> ft.Container:
-        """`node`'s kept box, made if new, at `rect` and in its current colours."""
-        box = self._boxes.get(node)
+    def _draw_box(self, node: Node, rect: Rect, selected: bool) -> None:
+        """Makes `node`'s box shapes if new, and sets them to `rect`, its text and colours."""
+        box = self._box_shapes.get(node)
         if box is None:
-            box = self._boxes[node] = ft.Container(
-                content=ft.Text(font_family=FONT_FAMILY, size=DEFAULT_FONT_SIZE),
-                border=ft.Border.all(1, self.theme.edge),
-                border_radius=CORNER_RADIUS,
-                alignment=ft.Alignment.CENTER,
-                on_click=lambda _: self.on_select(node),
+            box = self._box_shapes[node] = _BoxShapes(
+                fill=cv.Rect(0, 0, 0, 0, border_radius=CORNER_RADIUS),
+                border=cv.Rect(0, 0, 0, 0, border_radius=CORNER_RADIUS, paint=self._border_paint),
+                text=cv.Text(0, 0, alignment=ft.Alignment.CENTER),
             )
-        box.visible = True
-        box.left, box.top, box.width, box.height = rect.x, rect.y, rect.width, rect.height
-        _text(box).value = node.text
-        self._colour(box, self.theme.selection if selected else self.theme.for_depth(self._depths[node]))
-        return box
+            self._box_list.extend(_shapes_of(box))
+        for shape in (box.fill, box.border):
+            shape.x, shape.y, shape.width, shape.height = rect.x, rect.y, rect.width, rect.height
+        box.text.x, box.text.y = rect.x + rect.width / 2, rect.y + rect.height / 2
+        box.text.value = node.text
+        self._colour(node, self.theme.selection if selected else self.theme.for_depth(self._depths[node]))
 
-    def _marker(self, node: Node, rect: Rect, side: str) -> ft.Container:
-        """`node`'s kept fold marker, made if new: the circle on the outer side of a node
-        with children, which folds or unfolds it.
+    def _draw_marker(self, node: Node, rect: Rect, side: str) -> None:
+        """Makes `node`'s fold marker shapes if new, and places them on its outer `side`.
 
         Empty while the node is unfolded; while it is folded, it shows how many nodes the
         fold hides, at any depth, so a folded branch's size can be seen without opening it.
         """
-        marker = self._markers.get(node)
+        marker = self._marker_shapes.get(node)
         if marker is None:
-            marker = self._markers[node] = ft.Container(
-                content=ft.Text(font_family=FONT_FAMILY, size=10, color=self.theme.canvas),
-                width=MARKER_SIZE,
-                height=MARKER_SIZE,
-                bgcolor=self.theme.edge,
-                shape=ft.BoxShape.CIRCLE,
-                alignment=ft.Alignment.CENTER,
-                on_click=lambda _: self.on_toggle_fold(node),
+            marker = self._marker_shapes[node] = _MarkerShapes(
+                circle=cv.Circle(0, 0, 0, paint=self._marker_paint),
+                count=cv.Text(0, 0, alignment=ft.Alignment.CENTER, style=self._count_style),
             )
-        marker.visible = True
-        marker.left = rect.x + rect.width + MARKER_GAP if side == "right" else rect.x - MARKER_GAP - MARKER_SIZE
-        marker.top = rect.y + (rect.height - MARKER_SIZE) / 2
-        _text(marker).value = str(descendant_count(node)) if node.folded else ""
-        return marker
+            self._marker_list.extend(_shapes_of(marker))
+        centre = self._marker_centres[node] = marker_centre(rect, side)
+        marker.circle.x, marker.circle.y = centre
+        marker.circle.radius = MARKER_SIZE / 2
+        marker.count.x, marker.count.y = centre
+        marker.count.value = str(descendant_count(node)) if node.folded else ""
 
-    @staticmethod
-    def _colour(box: ft.Container, colors: Colors) -> None:
-        """Sets `box`'s background and text colour from `colors`."""
-        box.bgcolor = colors.background
-        _text(box).color = colors.text
+    def _colour(self, node: Node, colors: Colors) -> list[cv.Shape]:
+        """Sets `node`'s box fill and text colour from `colors`; returns the two shapes."""
+        box = self._box_shapes[node]
+        fill = self._fills.get(colors.background)
+        if fill is None:
+            fill = self._fills[colors.background] = ft.Paint(color=colors.background)
+        style = self._text_styles.get(colors.text)
+        if style is None:
+            style = self._text_styles[colors.text] = ft.TextStyle(
+                font_family=FONT_FAMILY, size=DEFAULT_FONT_SIZE, color=colors.text
+            )
+        box.fill.paint, box.text.style = fill, style
+        return [box.fill, box.text]
+
+    def _stroke(self, width: float) -> ft.Paint:
+        """An outline `width` pixels wide, in the theme's edge colour."""
+        return ft.Paint(color=self.theme.edge, style=ft.PaintingStyle.STROKE, stroke_width=width)
 
 
-def _text(container: ft.Container) -> ft.Text:
-    """The `Text` a box or marker was made with."""
-    content = container.content
-    assert isinstance(content, ft.Text)
-    return content
+def _shapes_of(kept: cv.Path | _BoxShapes | _MarkerShapes) -> list[cv.Shape]:
+    """The shapes a kept path, box or marker is drawn with, bottom to top."""
+    if isinstance(kept, _BoxShapes):
+        return [kept.fill, kept.border, kept.text]
+    if isinstance(kept, _MarkerShapes):
+        return [kept.circle, kept.count]
+    return [kept]
