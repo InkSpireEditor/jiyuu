@@ -2,7 +2,7 @@
 
 import random
 
-from jiyuu.layout import LayoutSettings, Plane, Rect, layout, subtree_height
+from jiyuu.layout import LayoutSettings, Plane, Rect, layout, subtree_heights
 from jiyuu.measure import FixedMeasurer
 from jiyuu.model import Node
 
@@ -99,7 +99,7 @@ def test_a_folded_nodes_subtree_takes_only_its_own_height() -> None:
     root = Node(text="Project", children=[folded])
 
     _, own_height = 16.0 + 2 * 8.0, 16.0 + 2 * 8.0
-    assert subtree_height(folded, MEASURER, SETTINGS) == own_height
+    assert subtree_heights(root, MEASURER, SETTINGS) == {folded: own_height}
 
     rects, edges = layout(root, MEASURER, SETTINGS)
     assert folded in rects
@@ -161,3 +161,33 @@ def test_plane_keeps_the_root_still_when_a_branch_is_folded() -> None:
 
     assert after == before
     assert (plane.width, plane.height) == size_before
+
+
+class _CountingMeasurer:
+    """A `FixedMeasurer` that also counts how many times each text was measured."""
+
+    def __init__(self) -> None:
+        self.calls: dict[str, int] = {}
+
+    def size_of(self, text: str) -> tuple[float, float]:
+        """`MEASURER`'s answer for `text`, counted."""
+        self.calls[text] = self.calls.get(text, 0) + 1
+        return MEASURER.size_of(text)
+
+
+def _deep_tree(depth: int, width: int, prefix: str = "n") -> Node:
+    """A complete tree `depth` levels below its root, every node with `width` children,
+    each node's text distinct."""
+    children = [_deep_tree(depth - 1, width, f"{prefix}.{i}") for i in range(width)] if depth else []
+    return Node(text=prefix, children=children)
+
+
+def test_a_layout_measures_each_node_a_fixed_number_of_times_however_deep() -> None:
+    """Every node is measured twice, once by each pass, on a 781-node tree five levels
+    deep: a subtree's height is computed once, not again for every level above it."""
+    root = _deep_tree(depth=4, width=5)
+    measurer = _CountingMeasurer()
+    rects, _ = layout(root, measurer, SETTINGS)
+
+    assert len(rects) == 781
+    assert set(measurer.calls.values()) == {2}

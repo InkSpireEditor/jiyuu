@@ -30,11 +30,11 @@ import flet as ft
 
 from ..layout import Edge, LayoutSettings, Plane, Rect, layout
 from ..measure import DEFAULT_FONT_PATH, PillowMeasurer
-from ..model import MindMap, Node, depths
+from ..model import MindMap, Node
 from ..navigation import DOWN, HOME, LEFT, RIGHT, UP, Navigator, is_inside
 from ..theme import Theme
 from ..view import View
-from .canvas import FONT_FAMILY, map_controls
+from .canvas import FONT_FAMILY, MapDrawing
 
 #: How much a Ctrl + two-finger vertical move zooms: each pixel moved multiplies the scale
 #: by `1 + ZOOM_PER_PIXEL * pixels`. The sign was chosen by hand on a trackpad with natural
@@ -53,6 +53,19 @@ NAVIGATION_KEYS = {
     "Arrow Up": UP,
     "Arrow Down": DOWN,
 }
+
+
+@ft.control("Stack", isolated=True)
+class MapLayer(ft.Stack):
+    """The `Stack` holding every control a map is drawn with.
+
+    Declared isolated: when a control above it is updated, Flet does not compare this
+    layer's children for changes, which on a map of several hundred nodes takes around a
+    tenth of a second even when none of them changed. Panning and zooming, which only move
+    the drawing surface above this layer, therefore cost the same on any size of map. A
+    change to this layer's children is sent only by updating the layer, or the changed
+    controls, directly.
+    """
 
 
 class MapWindow:
@@ -74,8 +87,11 @@ class MapWindow:
         self.ctrl_held = False
         self.navigator = Navigator(mindmap.root)
         self.selected = mindmap.root
+        #: The map's controls, laid out on the drawing surface.
+        self.layer = MapLayer()
         #: The map's drawing surface. Its `left`, `top` and `scale` are the view.
-        self.surface = ft.Stack()
+        self.surface = ft.Stack(controls=[self.layer])
+        self.drawing = MapDrawing(theme, self.settings, on_select=self.select, on_toggle_fold=self.toggle_fold)
 
     def control(self) -> ft.Control:
         """The window's whole content."""
@@ -101,23 +117,14 @@ class MapWindow:
         )
 
     def redraw(self) -> None:
-        """Lays the map out again and rebuilds every control drawing it."""
+        """Lays the map out again and moves every control drawing it to its new place."""
         root = self.mindmap.root
         rects, self.edges = layout(root, self.measurer, self.settings)
         self.rects = self.plane.fit(rects, MARGIN)
-        self.surface.width, self.surface.height = self.plane.width, self.plane.height
-        self.surface.controls = map_controls(
-            root,
-            self.rects,
-            self.edges,
-            depths=depths(root),
-            theme=self.theme,
-            settings=self.settings,
-            size=(self.plane.width, self.plane.height),
-            on_toggle_fold=self.toggle_fold,
-            selected=self.selected,
-            on_select=self.select,
-        )
+        size = (self.plane.width, self.plane.height)
+        self.surface.width, self.surface.height = size
+        self.layer.width, self.layer.height = size
+        self.layer.controls = self.drawing.draw(root, self.rects, self.edges, size, self.selected)
         self.apply_view()
 
     def apply_view(self) -> None:
@@ -138,16 +145,18 @@ class MapWindow:
         if node.folded and is_inside(self.selected, node):
             self.selected = node
         self.redraw()
-        self.surface.update()
+        self.page.update(self.layer, self.surface)
 
     def select(self, node: Node) -> None:
-        """Selects `node`, redraws, and pans just enough to keep it in the window."""
+        """Selects `node`, recolours it and the node selected before, and pans just enough
+        to keep it in the window. Nothing moves, so the map is not laid out again, and only
+        the two recoloured boxes and the surface's position are sent."""
+        recoloured = self.drawing.set_selected(self.selected, node)
         self.selected = node
-        self.redraw()
         if self.window_size is not None:
             self.view.reveal(self.rects[node], *self.window_size, REVEAL_MARGIN)
             self.apply_view()
-        self.surface.update()
+        self.page.update(*recoloured, self.surface)
 
     def centre_on_root(self) -> None:
         """Back to 100%, with the root's box in the middle of the window."""
@@ -155,7 +164,7 @@ class MapWindow:
             return
         self.view.centre_on(self.rects[self.mindmap.root], *self.window_size)
         self.apply_view()
-        self.surface.update()
+        self.page.update(self.surface)
 
     def _on_size_change(self, event: ft.LayoutSizeChangeEvent) -> None:
         first = self.window_size is None
@@ -175,14 +184,13 @@ class MapWindow:
         else:
             self.view.pan(event.focal_point_delta.x, event.focal_point_delta.y)
         self.apply_view()
-        self.surface.update()
+        self.page.update(self.surface)
 
     def _on_key_down(self, event: ft.KeyDownEvent) -> None:
         if event.key.startswith("Control"):
             self.ctrl_held = True
         elif event.key == "Escape":
-            self.selected = self.navigator.move(self.selected, HOME)
-            self.redraw()
+            self.select(self.navigator.move(self.selected, HOME))
             self.centre_on_root()
         else:
             self._on_command_key(event.key)

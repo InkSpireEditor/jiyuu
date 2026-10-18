@@ -39,7 +39,7 @@ Status values: `todo`, `in progress`, `done`, `blocked: <reason>`.
 | Python `>=3.12,<4.0.0` in `requires-python`, 3.14 in CI | Same as inkspire-api |
 | Flet 1.0.x (1.0.4 on PyPI on 2026-10-16, `requires_python >=3.10`) | Possible mobile build later from the same code |
 | Linux desktop only for now. One map per window | User's choice |
-| Maps under ~200 nodes. The view may be rebuilt on each change | User's maps are this size |
+| Maps up to ~1,000 nodes. The window keeps one control per node and updates only what an action changed (step 9.5) | A user's map of ~600 nodes took ~0.8 s per key press when the view was rebuilt on each change |
 | Native format: `.ink`, grammar copied from inkspire-api `origin/main` at `01bc14a` (`inkspire_api/ink.py`, `docs/ink-format.md`) | Possible merge with inkspire later |
 | `ink:meta` holds `kind: mindmap` | Tells a map apart from a prose `.ink` file |
 | `ink:body` holds the tree as indented `- ` bullets, 2 spaces per level | Readable as a markdown list, editable on a phone |
@@ -1349,7 +1349,7 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
 
 ### Step 9: Map file load/save and `ink:nodes`
 
-- [ ] Status: `in progress`
+- [x] Status: `done (74c94c3)`
 - Depends on: 8.
 - Tasks:
   - [x] `jiyuu/formats/mapfile.py`:
@@ -1388,7 +1388,7 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
         them through `formats.read_ink` since step 8, without `ink:nodes`).
   - [x] The `.ink` written beside an opened `.mm` (step 7) goes through `mapfile.dump`, so
         it gains its `ink:nodes` section. Opening a `.ink` itself writes nothing.
-  - [ ] Hand check: open one of the user's own `.mm` maps, edit the `.ink` written beside
+  - [x] Hand check: open one of the user's own `.mm` maps, edit the `.ink` written beside
         it in a text editor (rename a node, move a branch, fold one with `folded: "true"`),
         open the `.ink`, and see the edits in the window.
 - Tests:
@@ -1438,6 +1438,73 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
     `jiyuu/formats/`, `jiyuu/cli.py` and `jiyuu/layout.py`.
   - The node id table under "Node paths and IDs" had wrong values for the two
     `Goals → TODO` rows (the ids of `[["TODO", 1]]` and `[["TODO", 2]]`); corrected.
+  - The user committed the step (`74c94c3`) and reported it working.
+
+### Step 9.5: Large maps
+
+- [x] Status: `done`
+- Depends on: 9.
+- Purpose: a user's own map of 614 nodes, 11 levels deep, fully unfolded, lagged on every
+  arrow key, Space press and click. Each one laid the whole map out again and rebuilt every
+  control. Measured in Python, before Flutter draws anything:
+  - `layout()`: 393 ms. 95% of it was Pillow `getbbox`: 6,938 text measurements for 614
+    nodes, because `subtree_height` was recursive and was called again from
+    `_place_column` at every level, and from `resolve_sides`.
+  - `map_controls()`: 82 ms, building 834 new controls.
+  - Flet's diff and serialization of those 834 new controls: 290 ms.
+
+  Panning and zooming already sent only the surface's `left`/`top`/`scale`.
+- Tasks:
+  - [x] `measure.PillowMeasurer` keeps every size it has measured, by text.
+  - [x] `layout.subtree_heights(root, measurer, settings) -> dict[Node, float]` replaces
+        the recursive `subtree_height`: one bottom-up pass over the visible nodes below the
+        root. `resolve_sides(root, heights)` and the placing pass read from it. Output is
+        unchanged: compared byte for byte against the previous code on 40 generated trees
+        with folds and preset sides.
+  - [x] `ui/canvas.MapDrawing` replaces `map_controls`. It keeps each node's box, fold
+        marker and edge path, keyed by node, and `draw` only sets their properties. Flet
+        sends a property only when its value changed. A node hidden by a fold keeps its
+        controls in the drawing, invisible (its path gets no elements), because Flet
+        serializes a control in full each time it is added back; controls of nodes no
+        longer in the tree are dropped.
+  - [x] The map's controls sit in `ui/app.MapLayer`, a `Stack` declared with
+        `@ft.control("Stack", isolated=True)`, inside the surface that carries the view.
+        Updating a control makes Flet compare every control under it for changes, ~95 ms
+        for this map even when nothing under it changed; an isolated control's children are
+        skipped. A pan or zoom updates the surface only.
+  - [x] `MapWindow.select` recolours the two boxes (`MapDrawing.set_selected`) and sends
+        only those and the surface, instead of calling `redraw`; Escape goes through
+        `select`. Folding calls `redraw` and sends the layer and the surface.
+  - [x] Hand check: open a ~600-node map of the user's own, fully unfolded; hold an arrow
+        key, fold and unfold a large branch with Space, pan and zoom. Each responds without
+        a visible delay.
+- Tests:
+  - [x] A second `PillowMeasurer.size_of` of the same text does not ask the font again.
+  - [x] A layout of a 781-node tree, five levels deep, measures every node exactly twice
+        (once per pass).
+  - [x] A second `MapDrawing.draw` returns the same control objects; a folded node's
+        child box leaves the drawing and the same object comes back on unfolding; a node
+        replaced in the tree gets a new box.
+  - [x] Selecting keeps the layer's controls the same list and sends only the two
+        recoloured boxes and the surface; folding sends the layer and the surface; the layer
+        is isolated. A stand-in page records what each action sends.
+- Done when: the tests pass and the hand check shows no visible delay.
+- Results, on the same 614-node map. "Python" is the handler's own time; "round trip" adds
+  the window answering a request sent right after (3 ms when nothing was changed), measured
+  by a script outside the repository driving a real window:
+
+  | Action | Before the step (Python) | Python | Round trip |
+  |---|---|---|---|
+  | Pan | ~100 ms | 4 ms | 53 ms |
+  | Select | ~770 ms | 5 ms | 58 ms |
+  | Fold / unfold | ~770 ms | 106 ms | 173 ms |
+
+  The ~50 ms left on a pan or select is Flutter rebuilding every box widget when the
+  surface moves: measured separately, moving 800 generated boxes costs 22–38 ms with or
+  without text and borders, while 600 edges on one canvas cost ~4 ms, and 800 boxes, their
+  text and 600 edges all drawn on one canvas cost 17 ms. Drawing the nodes on the canvas is
+  step 1's fallback (b); whether to take it is for the user to decide after the hand check.
+- The user did the hand check and found it much better.
 
 ### Step 10: Edit commands and undo
 
@@ -1464,9 +1531,12 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
         tree (`copy.deepcopy`, or a hand-written recursive copy of `Node`) onto an undo
         stack capped at 100 entries (oldest dropped first); redo stack cleared on any new
         command. `undo()`/`redo()` swap the live tree with the top of the respective stack.
-        Deep-copying the whole tree on every command is accepted here because maps are
-        capped at ~200 nodes (per the Decisions table) — this is not expected to be fast
-        enough for much larger maps, and is not meant to be.
+        Deep-copying the whole tree on every command was accepted when maps were assumed
+        to stay under ~200 nodes. Since step 9.5 the window keys its controls by `Node`
+        object, so an undo that swaps in a copied tree makes every node new and rebuilds
+        every control once (~0.4 s on a 614-node map, from step 9.5's numbers). Decide at
+        the start of this step whether that is acceptable, or whether undo should restore
+        changes onto the existing `Node` objects instead.
 - Tests:
   - [ ] Each command in the table, checked individually against a small fixture tree.
   - [ ] A sequence of several commands, then `undo()` repeatedly back to the start, then

@@ -94,38 +94,44 @@ def node_box_size(node: Node, measurer: Measurer, settings: LayoutSettings) -> t
 # --- pass 1: bottom-up, heights only ----------------------------------------
 
 
-def _column_height(nodes: list[Node], measurer: Measurer, settings: LayoutSettings) -> float:
+def _column_height(nodes: list[Node], heights: dict[Node, float], settings: LayoutSettings) -> float:
     """The height a column of sibling subtrees needs: their own heights, plus a gap between
     each pair of them. Zero for an empty column, with no gap to account for."""
     if not nodes:
         return 0.0
-    heights = [subtree_height(node, measurer, settings) for node in nodes]
-    return sum(heights) + settings.vertical_gap * (len(heights) - 1)
+    return sum(heights[node] for node in nodes) + settings.vertical_gap * (len(nodes) - 1)
 
 
-def subtree_height(
-    node: Node, measurer: Measurer, settings: LayoutSettings, *, is_root: bool = False
-) -> float:
-    """The height `node`'s whole subtree needs: at least its own box, and more if its
-    visible children need more room than that.
+def subtree_heights(root: Node, measurer: Measurer, settings: LayoutSettings) -> dict[Node, float]:
+    """The height every visible node below `root` needs for its whole subtree: at least its
+    own box, and more if its visible children need more room than that.
 
-    A folded node, or one with no children, needs only its own height: a folded node's
-    hidden children are not part of what this reserves space for. The root is the one node
-    whose children are not all in one column, so `is_root` measures one column per side
-    instead of one column for all of `node.children` together.
+    A folded node, or one with no children, needs only its own height, and the nodes a fold
+    hides get no entry. `root` itself gets none either: it is the one node whose children
+    are split into two columns, which depend on the sides `resolve_sides` decides from these
+    heights. Each node is visited once, children before their parent, so a layout costs one
+    pass over the tree rather than one pass per level above each node.
     """
-    _, own_height = node_box_size(node, measurer, settings)
-    if node.folded or not node.children:
-        return own_height
-    if is_root:
-        right = _column_height([c for c in node.children if c.side == "right"], measurer, settings)
-        left = _column_height([c for c in node.children if c.side == "left"], measurer, settings)
-        return max(own_height, right, left)
-    return max(own_height, _column_height(node.children, measurer, settings))
+    heights: dict[Node, float] = {}
+
+    def visit(node: Node) -> float:
+        _, own_height = node_box_size(node, measurer, settings)
+        if node.folded or not node.children:
+            heights[node] = own_height
+        else:
+            for child in node.children:
+                visit(child)
+            heights[node] = max(own_height, _column_height(node.children, heights, settings))
+        return heights[node]
+
+    for child in root.children:
+        visit(child)
+    return heights
 
 
-def resolve_sides(root: Node, measurer: Measurer, settings: LayoutSettings) -> None:
-    """Assigns `"left"` or `"right"` to every one of `root`'s children that has no side yet.
+def resolve_sides(root: Node, heights: dict[Node, float]) -> None:
+    """Assigns `"left"` or `"right"` to every one of `root`'s children that has no side yet,
+    given each child's subtree height from `subtree_heights`.
 
     Processed in the order the children were written in: a child with a side already set
     keeps it, and still counts toward that side's running height, so a child decided after
@@ -142,9 +148,9 @@ def resolve_sides(root: Node, measurer: Measurer, settings: LayoutSettings) -> N
         if child.side not in ("left", "right"):
             child.side = "right" if right_total <= left_total else "left"
         if child.side == "right":
-            right_total += subtree_height(child, measurer, settings)
+            right_total += heights[child]
         else:
-            left_total += subtree_height(child, measurer, settings)
+            left_total += heights[child]
 
 
 # --- pass 2: top-down, assigning Rects --------------------------------------
@@ -159,17 +165,16 @@ def _place_column(
     *,
     measurer: Measurer,
     settings: LayoutSettings,
+    heights: dict[Node, float],
     out: dict[Node, Rect],
 ) -> None:
     """Places a column of sibling subtrees, stacked and centred within `available_height`."""
     if not nodes:
         return
-    heights = [subtree_height(node, measurer, settings) for node in nodes]
-    total = sum(heights) + settings.vertical_gap * (len(heights) - 1)
-    y = y_top + (available_height - total) / 2
-    for node, height in zip(nodes, heights):
-        _place(node, near_x, y, height, side, measurer=measurer, settings=settings, out=out)
-        y += height + settings.vertical_gap
+    y = y_top + (available_height - _column_height(nodes, heights, settings)) / 2
+    for node in nodes:
+        _place(node, near_x, y, heights[node], side, measurer=measurer, settings=settings, heights=heights, out=out)
+        y += heights[node] + settings.vertical_gap
 
 
 def _place(
@@ -181,6 +186,7 @@ def _place(
     *,
     measurer: Measurer,
     settings: LayoutSettings,
+    heights: dict[Node, float],
     out: dict[Node, Rect],
     is_root: bool = False,
 ) -> None:
@@ -209,18 +215,18 @@ def _place(
         _place_column(
             [c for c in node.children if c.side == "right"],
             x + width + settings.horizontal_gap, y_top, height_for_node, "right",
-            measurer=measurer, settings=settings, out=out,
+            measurer=measurer, settings=settings, heights=heights, out=out,
         )
         _place_column(
             [c for c in node.children if c.side == "left"],
             x - settings.horizontal_gap, y_top, height_for_node, "left",
-            measurer=measurer, settings=settings, out=out,
+            measurer=measurer, settings=settings, heights=heights, out=out,
         )
     else:
         child_near_x = (x + width + settings.horizontal_gap) if side == "right" else (x - settings.horizontal_gap)
         _place_column(
             node.children, child_near_x, y_top, height_for_node, side,
-            measurer=measurer, settings=settings, out=out,
+            measurer=measurer, settings=settings, heights=heights, out=out,
         )
 
 
@@ -234,17 +240,27 @@ def layout(
     from the layout entirely, not just from being drawn, so a caller never has to filter
     hidden nodes out of the result itself.
 
-    Resolves every one of `root`'s children's sides first (see `resolve_sides`), so the two
-    passes that follow, and the edges built from their result, all agree on where every
+    Measures every visible subtree first (see `subtree_heights`), then resolves every one of
+    `root`'s children's sides from those heights (see `resolve_sides`), so the placing pass
+    that follows, and the edges built from its result, all agree on where every
     first-level node ends up. The root's own box is centred on `(0, 0)`; everything else is
     placed outward from it, so the whole plane's vertical extent is centred on `y = 0` too.
     """
     settings = settings if settings is not None else LayoutSettings()
-    resolve_sides(root, measurer, settings)
+    heights = subtree_heights(root, measurer, settings)
+    resolve_sides(root, heights)
+
+    _, height = node_box_size(root, measurer, settings)
+    if not root.folded:
+        right = _column_height([c for c in root.children if c.side == "right"], heights, settings)
+        left = _column_height([c for c in root.children if c.side == "left"], heights, settings)
+        height = max(height, right, left)
 
     rects: dict[Node, Rect] = {}
-    height = subtree_height(root, measurer, settings, is_root=True)
-    _place(root, 0.0, -height / 2, height, "right", measurer=measurer, settings=settings, out=rects, is_root=True)
+    _place(
+        root, 0.0, -height / 2, height, "right",
+        measurer=measurer, settings=settings, heights=heights, out=rects, is_root=True,
+    )
 
     edges = [
         Edge(parent=parent, child=child, side="right" if rects[child].x >= parent_rect.x else "left")

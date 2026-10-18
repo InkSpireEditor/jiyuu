@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from jiyuu.measure import DEFAULT_FONT_PATH, FixedMeasurer, PillowMeasurer
 
 
@@ -31,3 +33,11 @@ def test_default_font_path_exists() -> None:
     """The font the default measurer loads is bundled with the package, not assumed to be
     installed on whatever machine jiyuu runs on."""
     assert Path(DEFAULT_FONT_PATH).is_file()
+
+
+def test_pillow_measurer_measures_each_text_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A text measured before is answered without asking the font again."""
+    measurer = PillowMeasurer()
+    first = measurer.size_of("Project")
+    monkeypatch.setattr(measurer._font, "getbbox", None)  # pylint: disable=protected-access
+    assert measurer.size_of("Project") == first

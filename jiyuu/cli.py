@@ -12,7 +12,7 @@ import typer
 
 from . import __version__
 from .formats import describe, ink, mapfile, read_map, write_text_atomically
-from .layout import LayoutSettings, resolve_sides
+from .layout import LayoutSettings, resolve_sides, subtree_heights
 from .measure import PillowMeasurer
 from .model import MindMap
 from .theme import DEFAULT_THEME, ThemeError, available_themes, load_theme
@@ -68,7 +68,7 @@ def _save_beside(mindmap: MindMap, path: Path) -> None:
     if target.exists():
         print(f"{target}: already exists, not overwritten", file=sys.stderr)
         return
-    resolve_sides(mindmap.root, PillowMeasurer(), LayoutSettings())
+    resolve_sides(mindmap.root, subtree_heights(mindmap.root, PillowMeasurer(), LayoutSettings()))
     write_text_atomically(target, mapfile.dump(mindmap))
     print(f"{target}: written", file=sys.stderr)
 

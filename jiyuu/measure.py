@@ -33,15 +33,17 @@ class Measurer(Protocol):
 class PillowMeasurer:
     """Predicts a string's rendered size from a TrueType font's own metrics, via Pillow.
 
-    The font is loaded once, in `__init__`, rather than on every call to `size_of`: a layout
-    pass calls it once per node, and reloading the same font file from disk that many times
-    would be pure waste.
+    The font is loaded once, in `__init__`, rather than on every call to `size_of`. Each
+    size is also kept once measured: the window lays a map out again on every fold, and
+    asking Pillow for the size of hundreds of unchanged strings each time takes a large part
+    of a second on a map of several hundred nodes.
     """
 
     def __init__(
         self, font_path: str | PathLike[str] = DEFAULT_FONT_PATH, size: float = DEFAULT_FONT_SIZE
     ) -> None:
         self._font = ImageFont.truetype(font_path, size)
+        self._sizes: dict[str, tuple[float, float]] = {}
 
     def size_of(self, text: str) -> tuple[float, float]:
         """`(width, height)` Pillow predicts for `text` in this font.
@@ -50,8 +52,11 @@ class PillowMeasurer:
         no text yet — one just created, waiting to be typed into — still gets a box with
         some width to it rather than collapsing to zero.
         """
-        left, top, right, bottom = self._font.getbbox(text or " ")
-        return (right - left, bottom - top)
+        size = self._sizes.get(text)
+        if size is None:
+            left, top, right, bottom = self._font.getbbox(text or " ")
+            size = self._sizes[text] = (right - left, bottom - top)
+        return size
 
 
 @dataclass
