@@ -13,7 +13,13 @@ Gestures, as they reach this window from a trackpad on Linux:
 
 Keys that change the map, each acting on the selected node (see `jiyuu.editing`):
 
-- Insert or Tab adds an empty child, Enter an empty sibling, and the new node is selected;
+- F2 opens a text field over the node, holding its text, all selected so that typing
+  replaces it; typing a character opens the field holding just that character. Enter
+  keeps the text typed, as does clicking anywhere outside the field; Escape closes the
+  field and leaves the node's text as it was. While the field is open, every other key
+  is typed into it, or edits the text in it, and does nothing else;
+- Insert or Tab adds an empty child, Enter an empty sibling, and opens the text field on
+  the new node;
 - Delete deletes the node and its branch;
 - Ctrl+Up and Ctrl+Down move the node up or down among its siblings;
 - Ctrl and the arrow pointing towards the root moves the node up one level, next to its
@@ -37,11 +43,18 @@ two-finger move whose scale stays at 1, so it cannot be told apart from a pan. C
 tracked with a `KeyboardListener` because it reports key releases as well as key presses;
 the page-wide keyboard event reports only presses, and so cannot tell when Ctrl is let go.
 Shift is tracked the same way, since a `KeyboardListener` event carries only the key.
+
+A `KeyboardListener` event names the key pressed, not the character it types. The
+character that opens the text field is worked out from the key's name and Shift (see
+`typed_character`), which gives the right character for a letter, but can give another
+character than the one printed on the key for a key that types a different character with
+Shift held. Every character after the first is typed into the field itself.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
@@ -49,12 +62,12 @@ import flet as ft
 
 from ..editing import Editor
 from ..layout import Edge, LayoutSettings, Plane, Rect, layout
-from ..measure import DEFAULT_FONT_PATH, PillowMeasurer
+from ..measure import DEFAULT_FONT_PATH, DEFAULT_FONT_SIZE, PillowMeasurer
 from ..model import MindMap, Node
 from ..navigation import DOWN, HOME, LEFT, RIGHT, UP, Navigator, is_inside
 from ..theme import Theme
 from ..view import View
-from .canvas import FONT_FAMILY, MapDrawing
+from .canvas import CORNER_RADIUS, FONT_FAMILY, MapDrawing
 
 #: How much a Ctrl + two-finger vertical move zooms: each pixel moved multiplies the scale
 #: by `1 + ZOOM_PER_PIXEL * pixels`. The sign was chosen by hand on a trackpad with natural
@@ -73,13 +86,32 @@ NAVIGATION_KEYS = {
     "Arrow Up": UP,
     "Arrow Down": DOWN,
 }
-#: Keys that add a node or delete one, and the `Editor` method each one calls.
-EDIT_KEYS = {
+#: Keys that add a node, and the `Editor` method each one calls.
+ADD_KEYS = {
     "Insert": Editor.add_child,
     "Tab": Editor.add_child,
     "Enter": Editor.add_sibling,
-    "Delete": Editor.delete,
 }
+#: The narrowest the text field opened over a node is, in pixels of the drawing surface, so
+#: that a node with short or no text still has room to type in.
+MIN_FIELD_WIDTH = 120.0
+#: The width of the border around the text field, wider than a node's own border.
+FIELD_BORDER_WIDTH = 2
+
+
+def typed_character(key: str, shift: bool) -> str | None:
+    """The character typed by pressing the key Flet names `key`, with Shift held if
+    `shift`, or `None` if the key does not type a character on its own.
+
+    A letter key is named by its capital letter, and types it in lower case unless Shift is
+    held. Any other key named by a single character is taken to type that character. The
+    space bar is not counted: it folds the selected node.
+    """
+    if len(key) != 1 or key == " ":
+        return None
+    if key.isalpha() and not shift:
+        return key.lower()
+    return key
 
 
 @ft.control("Stack", isolated=True)
@@ -93,6 +125,16 @@ class MapLayer(ft.Stack):
     change to this layer's children is sent only by updating the layer, or the changed
     controls, directly.
     """
+
+
+@dataclass
+class TextEdit:
+    """A node whose text is being edited: the node, the field its text is edited in, and
+    the container drawing the box around the field."""
+
+    node: Node
+    field: ft.TextField
+    box: ft.Container
 
 
 class MapWindow:
@@ -114,6 +156,10 @@ class MapWindow:
         self.ctrl_held = False
         self.shift_held = False
         self.editor = Editor(mindmap.root)
+        #: The node whose text is being edited, if any, and the field it is edited in.
+        self.text_edit: TextEdit | None = None
+        #: The control the window's key presses reach while no text is being edited.
+        self.keyboard: ft.KeyboardListener | None = None
         self.navigator = Navigator(mindmap.root)
         self.selected = mindmap.root
         #: The map's controls, laid out on the drawing surface.
@@ -126,24 +172,25 @@ class MapWindow:
         """The window's whole content."""
         # The Container is what fills the window: KeyboardListener is not a layout control,
         # so it cannot be made to expand itself. It also clips the map to the window.
+        self.keyboard = ft.KeyboardListener(
+            autofocus=True,
+            on_key_down=self._on_key_down,
+            on_key_repeat=self._on_key_repeat,
+            on_key_up=self._on_key_up,
+            content=ft.GestureDetector(
+                on_scale_update=self._on_scale_update,
+                on_tap_up=self._on_tap_up,
+                content=ft.Stack(
+                    controls=[self.surface],
+                    on_size_change=self._on_size_change,
+                ),
+            ),
+        )
         return ft.Container(
             expand=True,
             bgcolor=self.theme.canvas,
             clip_behavior=ft.ClipBehavior.HARD_EDGE,
-            content=ft.KeyboardListener(
-                autofocus=True,
-                on_key_down=self._on_key_down,
-                on_key_repeat=self._on_key_repeat,
-                on_key_up=self._on_key_up,
-                content=ft.GestureDetector(
-                    on_scale_update=self._on_scale_update,
-                    on_tap_up=self._on_tap_up,
-                    content=ft.Stack(
-                        controls=[self.surface],
-                        on_size_change=self._on_size_change,
-                    ),
-                ),
-            ),
+            content=self.keyboard,
         )
 
     def redraw(self) -> None:
@@ -176,6 +223,86 @@ class MapWindow:
         # The view stays where it is: a fold is often made by clicking a marker far from
         # the selected node, which should not pan back to it.
         self.show_change(selected, reveal=False)
+
+    def start_editing(self, node: Node, text: str | None = None) -> None:
+        """Opens a text field over `node`'s box and gives it the keyboard.
+
+        The field is drawn hollow, in the canvas colour with a thicker border, its text and
+        cursor in the edge colour, so that it looks unlike any node's box, selected or not.
+
+        Without `text`, the field holds `node`'s text, all of it selected; with `text`, it
+        holds `text` with the cursor after it. The field is on the drawing surface, so it
+        moves and zooms with the map. It covers the node's box, and is at least
+        `MIN_FIELD_WIDTH` wide, growing away from the root on the left side of the map.
+
+        The field keeps its size while text is typed into it, and scrolls its text once
+        the text is wider than it; the node's box is resized to the new text when the
+        field closes. Changing the field's size while text is typed into it sends the field
+        to the window again, and that moved the cursor back to where the field had placed
+        it when it opened.
+        """
+        rect = self.rects[node]
+        value = node.text if text is None else text
+        field = ft.TextField(
+            value=value,
+            selection=ft.TextSelection(0 if text is None else len(value), len(value)),
+            autofocus=True,
+            dense=True,
+            border=ft.NoInputBorder(),
+            content_padding=ft.Padding.symmetric(horizontal=self.settings.pad_x),
+            text_align=ft.TextAlign.CENTER,
+            text_style=ft.TextStyle(font_family=FONT_FAMILY, size=DEFAULT_FONT_SIZE, color=self.theme.edge),
+            cursor_color=self.theme.edge,
+            on_submit=self._on_field_done,
+            on_blur=self._on_field_done,
+        )
+        # The box around the field is drawn by a container exactly as tall as the node's
+        # box, which centres the field's line in it as the canvas centres a node's text:
+        # a text field on its own is as tall as the font's line, not as the node's box.
+        box = ft.Container(
+            content=field,
+            top=rect.y,
+            height=rect.height,
+            alignment=ft.Alignment.CENTER,
+            bgcolor=self.theme.canvas,
+            border=ft.Border.all(FIELD_BORDER_WIDTH, self.theme.edge),
+            border_radius=CORNER_RADIUS,
+        )
+        width = max(rect.width, MIN_FIELD_WIDTH)
+        box.width = width
+        box.left = rect.x + rect.width - width if self.navigator.side_of(node) == LEFT else rect.x
+        self.text_edit = TextEdit(node, field, box)
+        self.surface.controls = [self.layer, box]
+        self.page.update(self.surface)
+        # The field is asked for the keyboard once it is on screen: `autofocus` alone does
+        # not give it the keyboard when the field is added to a page already shown.
+        self.page.run_task(field.focus)
+
+    def finish_editing(self, keep: bool) -> None:
+        """Closes the text field, if one is open, and gives the keyboard back to the window.
+        If `keep`, the node's text becomes the text in the field (see `Editor.rename`), and
+        the map is laid out again around it."""
+        text_edit = self.text_edit
+        if text_edit is None:
+            return
+        self.text_edit = None
+        self.surface.controls = [self.layer]
+        version = self.editor.version
+        if keep:
+            self.editor.rename(text_edit.node, text_edit.field.value or "")
+        if self.editor.version != version:
+            self.show_change(text_edit.node)
+        else:
+            self.page.update(self.surface)
+        if self.keyboard is not None:
+            self.page.run_task(self.keyboard.focus)
+
+    def _on_field_done(self, event: ft.Event[ft.TextField]) -> None:
+        # Called when Enter submits the field and when the field loses the keyboard. One
+        # Enter can do both, and a closed field can still report losing the keyboard; only
+        # a call for the field that is still open does anything.
+        if self.text_edit is not None and event.control is self.text_edit.field:
+            self.finish_editing(keep=True)
 
     def edit(self, command: Callable[[Editor, Node], Node]) -> None:
         """Runs `command`, an `Editor` method, on the selected node, and shows the result
@@ -256,7 +383,8 @@ class MapWindow:
     def tap_at(self, wx: float, wy: float) -> None:
         """Handles a click at window position `(wx, wy)`: folds or unfolds the node whose
         fold marker is there, or else selects the node whose box is there, or else does
-        nothing."""
+        nothing. A text field still open is closed first, keeping its text."""
+        self.finish_editing(keep=True)
         x, y = self.view.to_content(wx, wy)
         marked = self.drawing.marker_at(x, y)
         if marked is not None:
@@ -271,6 +399,10 @@ class MapWindow:
             self.ctrl_held = True
         elif event.key.startswith("Shift"):
             self.shift_held = True
+        elif self.text_edit is not None:
+            # Every other key is the text field's own while it is open.
+            if event.key == "Escape":
+                self.finish_editing(keep=False)
         elif event.key == "Escape":
             self.select(self.navigator.move(self.selected, HOME))
             self.centre_on_root()
@@ -280,7 +412,7 @@ class MapWindow:
     def _on_key_repeat(self, event: ft.KeyRepeatEvent) -> None:
         # Holding an arrow key keeps moving the selection, or the node with Ctrl held;
         # holding any other key does not repeat its command.
-        if event.key in NAVIGATION_KEYS:
+        if event.key in NAVIGATION_KEYS and self.text_edit is None:
             self._on_command_key(event.key)
 
     def _on_command_key(self, key: str) -> None:
@@ -292,8 +424,15 @@ class MapWindow:
                 self.select(target)
         elif key == " ":
             self.toggle_fold(self.selected)
-        elif key in EDIT_KEYS:
-            self.edit(EDIT_KEYS[key])
+        elif key in ADD_KEYS:
+            self.edit(ADD_KEYS[key])
+            self.start_editing(self.selected)
+        elif key == "Delete":
+            self.edit(Editor.delete)
+        elif key == "F2":
+            self.start_editing(self.selected)
+        elif (character := typed_character(key, self.shift_held)) is not None:
+            self.start_editing(self.selected, character)
 
     def _on_ctrl_key(self, key: str) -> None:
         """Handles `key` pressed with Ctrl held."""

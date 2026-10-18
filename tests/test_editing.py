@@ -100,6 +100,16 @@ def test_delete_of_a_first_level_node_selects_a_neighbour_on_its_side() -> None:
     assert _texts(root) == ["Goals", "Risks"]
 
 
+def test_rename_sets_the_text_without_surrounding_whitespace() -> None:
+    root = _tree()
+    editor = Editor(root)
+    foo = _find(root, "Foo")
+    assert editor.rename(foo, "  Foo bar ") is foo
+    assert foo.text == "Foo bar"
+    editor.undo()
+    assert foo.text == "Foo"
+
+
 def test_move_up_and_move_down_swap_with_a_neighbour() -> None:
     root = _tree()
     editor = Editor(root)
@@ -169,6 +179,7 @@ def test_set_side_rejects_anything_but_left_or_right() -> None:
         (Editor.promote, "Goals"),  # first-level
         (Editor.promote, "Project"),
         (Editor.toggle_fold, "Foo"),  # no children
+        (lambda editor, node: editor.rename(node, " Foo "), "Foo"),  # same text once stripped
         (lambda editor, node: editor.set_side(node, "right"), "Goals"),  # already right
         (lambda editor, node: editor.set_side(node, "left"), "Foo"),  # not first-level
     ],
@@ -200,6 +211,7 @@ def test_undo_and_redo_step_through_a_sequence_of_commands() -> None:
         (Editor.delete, None),
         (Editor.toggle_fold, "Goals"),
         (lambda editor, node: editor.set_side(node, "left"), "Plans"),
+        (lambda editor, node: editor.rename(node, "Bar"), "Plans"),
     ]
     shapes, given, returned = [_shape(root)], [], []
     for command, text in steps:

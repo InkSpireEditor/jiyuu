@@ -1569,7 +1569,7 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
 
 ### Step 10: Edit commands and undo
 
-- [x] Status: `done (39a6143)`
+- [x] Status: `done (9855a5b)`
 - Depends on: 2.
 - Tasks — each command below takes the tree and the currently selected node, mutates the
   tree in place, and returns the `Node` that should be selected afterwards (`jiyuu/editing.py`,
@@ -1646,7 +1646,7 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
 
 ### Step 11: Editor UI
 
-- [ ] Status: `todo`
+- [x] Status: `done (223728d)`
 - Depends on: 6, 10.
 - Keybinding table (Freeplane defaults; re-check these specific bindings against a current
   Freeplane install before wiring them, and record any correction here as a decision):
@@ -1664,17 +1664,68 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
   | Escape, while editing text | discards the in-progress edit (no `rename` call) |
   | every key from step 6's table | handled exactly as in step 6, and only while **not** editing text |
 - Tasks:
-  - [ ] `editing.Editor.rename(node, text)`: `node.text = text`, returns `node`, recorded for
-        undo like step 10's commands (moved here from step 10).
-  - [ ] Text-edit mode: an `ft.TextField` overlaid on the selected node's `Container`,
+  - [x] `editing.Editor.rename(node, text)`: `node.text = text`, returns `node`, recorded for
+        undo like step 10's commands (moved here from step 10). The text is stripped of
+        leading and trailing whitespace, since the `.ink` body reader strips it; renaming to
+        the same text is a no-op.
+  - [x] Text-edit mode: an `ft.TextField` overlaid on the selected node's `Container`,
         pre-filled with its current text (selected, so typing replaces it, for the F2 case)
         or with the single starting character (for the "just start typing" case). While it
         is open, none of step 6's or this table's other bindings are handled by the
         page-level key handler — only Enter (commit: `editing.rename(selected, field.value)`,
         close the field, re-run layout, re-select `selected`) and Escape (close the field
         without calling `rename`) are handled, by the field itself.
-  - [ ] If step 1 found that Tab does not reach the page-level handler, this step uses only
-        Insert for "new child", per the decision recorded in step 1.
+        As built (`MapWindow.start_editing`, `finish_editing`):
+        - Nodes are shapes since step 9.6, so there is no `Container` per node. The field
+          is put on the drawing surface, above the layer, so it pans and zooms with the map.
+          It sits in an `ft.Container` exactly the size of the node's box, which draws the
+          fill and border. A `TextField` alone is as tall as the font's line (24.5 px against
+          a 28 px box for `Goals`), and its text sat 2–4 px lower than the canvas text;
+          inside the container its text lines up with the canvas text, checked in captures
+          of `worked-example.ink` at 1× and 3×.
+        - The field is drawn hollow, so that it looks unlike any node's box: the theme's
+          canvas colour inside a 2 px border, text and cursor in the edge colour. The
+          selection colours were tried first; the user could not tell that a node was being
+          edited.
+        - `autofocus` does not give the keyboard to a field added to a page already shown:
+          the first hand check could type only the character that opened the field, and no
+          cursor was drawn. `start_editing` calls the field's `focus()` after sending it;
+          checked in a window (`on_focus` fires, and the F2 text is drawn selected).
+        - The container is the box's width, and at least 120 px so that a short or new node
+          has room to type in; on the left side it extends leftwards. It keeps that size
+          while typing, and the field scrolls its text once the text is wider than it; the
+          node is resized when the field closes. Widening the field on every `on_change`
+          was tried first: in the hand check, typing past the box's width moved the cursor
+          back to the second character, which is where the field had placed it on opening.
+          Each widening sends the field to the window again, and that appears to re-apply
+          its starting selection.
+        - Enter arrives through the field's `on_submit`. Escape arrives at the window's
+          `KeyboardListener`, which also receives every key typed in the field and ignores
+          all of them except Escape and the Ctrl/Shift tracking. Losing focus (`on_blur`)
+          keeps the text too, and a click on the map keeps it before acting on the click.
+          After closing, the window calls `KeyboardListener.focus()` so the map keys work again.
+        - "Any printable character": a `KeyboardListener` event gives the key's name, not
+          the character typed. `typed_character` lower-cases a letter unless Shift is held,
+          and takes any other one-character name as is. A key whose shifted character
+          differs from its name (on an AZERTY keyboard, the digit row) can start the field
+          with the wrong first character; every later character is typed by the field.
+        - Insert, Tab and Enter open the field on the new node. Escape there leaves the new
+          node with empty text, as the table says (no `rename`). Naming a new node is its
+          own undo entry: the first Ctrl+Z empties its text, the second removes it.
+  - [x] If step 1 found that Tab does not reach the page-level handler, this step uses only
+        Insert for "new child", per the decision recorded in step 1. Tab was found working
+        in the step 10 hand check, through the `KeyboardListener`.
+  - [ ] ~~Re-check the keybindings against a current Freeplane install.~~ **Moved to
+        "Later"**: none is installed on this machine.
+- Tests:
+  - [x] `Editor.rename`: whitespace stripped, undone, same text a no-op (`tests/test_editing.py`).
+  - [x] In the window (`tests/test_ui.py`): `typed_character`; F2 opens the field over
+        the box with the text selected, and asks for the keyboard; the field's colours; typing a character opens it with that character;
+        Enter renames, lays out again and hands the keyboard back; Escape keeps the old
+        text and records nothing; keys do nothing else while the field is open; a new node's
+        field is 120 px wide, extending leftwards on the left side; a late event from a closed field is ignored;
+        a click keeps the text then acts; Insert, Tab and Enter open the field on the new
+        node; naming a new node then undoing twice.
 - Blockers/risks: depends on step 1's findings about Tab capture and about whether
   page-level key events fire while a `TextField` has focus — if they do not, Enter/Escape
   must be handled through the `TextField`'s own `on_submit`/keyboard callback instead of the
@@ -1682,6 +1733,17 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
   it does.
 - Done when: a manual checklist covering every row of the keybinding table above is ticked
   by the user, run against the live app.
+- Hand checklist (on a copy of a map):
+  - [x] F2: the field covers the box, the text is selected, typing replaces it, Enter keeps it.
+  - [x] Typing a letter, with and without Shift, starts the field with that letter.
+  - [x] Escape while editing leaves the text unchanged.
+  - [x] Insert, Tab, Enter: a new node with the field open on it; Enter on the root adds a child.
+  - [x] Arrow keys, Space, Delete and Ctrl+Z inside the field only edit the text.
+  - [x] Clicking elsewhere while editing keeps the text.
+  - [x] After closing the field, the map keys work again without clicking.
+  - [x] Delete, Ctrl+Up/Down, Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z, and step 6's keys, as before.
+  - The user did the hand check and found every row working, after the two fixes above
+    (giving the field the keyboard; keeping its size while typing).
 
 ### Step 12: Autosave
 
@@ -1826,7 +1888,8 @@ several maps open in tabs; an Android build; merging with inkspire-api (would mo
 An in-app File → Open dialog, deferred from step 5: Flet's `FilePicker` needs Zenity on
 Linux. Either a README note that Zenity must be installed, or a file browser drawn with Flet
 itself, which needs no system dependency. A user setting for the zoom direction, for
-trackpads with natural scrolling turned off (see step 5's findings).
+trackpads with natural scrolling turned off (see step 5's findings). Re-checking step 11's
+keybindings against a current Freeplane install, deferred because none is installed here.
 
 ## Open questions
 

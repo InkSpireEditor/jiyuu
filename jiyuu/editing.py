@@ -1,4 +1,5 @@
-"""Changing a map's tree: adding, deleting, moving, folding and re-siding nodes, with undo.
+"""Changing a map's tree: adding, deleting, renaming, moving, folding and re-siding nodes,
+with undo.
 
 An `Editor` holds one tree. Each of its commands takes the selected node, changes the tree
 in place, and returns the node to select afterwards. A command that would change nothing —
@@ -99,6 +100,20 @@ class Editor:
         state = self._capture()
         parent.children.remove(node)
         return self._record(state, node, selected)
+
+    def rename(self, node: Node, text: str) -> Node:
+        """Sets `node`'s text to `text`, without its leading and trailing whitespace; returns
+        `node`. Does nothing if that is already its text.
+
+        The whitespace is dropped because a map file stores each node's text on one line
+        and reads it back without it (see `jiyuu.formats.body`).
+        """
+        text = text.strip()
+        if text == node.text:
+            return node
+        state = self._capture()
+        node.text = text
+        return self._record(state, node, node)
 
     def move_up(self, node: Node) -> Node:
         """Swaps `node` with its previous sibling; returns `node`. Does nothing to the first."""

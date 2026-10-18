@@ -5,12 +5,13 @@ from typing import cast
 
 import flet as ft
 import flet.canvas as cv
+import pytest
 
 from jiyuu.layout import LayoutSettings, Plane, layout
 from jiyuu.measure import FixedMeasurer
 from jiyuu.model import MindMap, Node
 from jiyuu.theme import load_theme
-from jiyuu.ui.app import MapLayer, MapWindow
+from jiyuu.ui.app import MIN_FIELD_WIDTH, MapLayer, MapWindow, TextEdit, typed_character
 from jiyuu.ui.canvas import MapDrawing, marker_centre
 
 MEASURER = FixedMeasurer(width_per_char=10.0, height=16.0)
@@ -183,14 +184,27 @@ def test_node_at_and_marker_at_find_what_a_point_is_on() -> None:
 
 
 class _Page:
-    """Stands in for a page: records each call to `update` instead of sending anything."""
+    """Stands in for a page: records each call to `update` and `run_task` instead of
+    sending or running anything."""
 
     def __init__(self) -> None:
         self.updates: list[tuple[ft.Control, ...]] = []
+        self.tasks: list[object] = []
 
     def update(self, *controls: ft.Control) -> None:
         """Records `controls` as one update."""
         self.updates.append(controls)
+
+    def run_task(self, task: object) -> None:
+        """Records `task` as one task to run."""
+        self.tasks.append(task)
+
+
+class _FieldEvent:
+    """Stands in for an event from a text field: only its `control` is read."""
+
+    def __init__(self, control: ft.TextField | None) -> None:
+        self.control = control
 
 
 class _Key:
@@ -205,6 +219,7 @@ def _window(root: Node) -> tuple[MapWindow, _Page]:
     screen it would send to."""
     page = _Page()
     window = MapWindow(cast(ft.Page, page), MindMap(root=root), THEME)
+    window.control()
     window.redraw()
     window.window_size = (800.0, 600.0)
     return window, page
@@ -221,6 +236,19 @@ def _press_with(window: MapWindow, modifiers: list[str], key: str) -> None:
     _press(window, key)
     for modifier in modifiers:
         window._on_key_up(cast(ft.KeyUpEvent, _Key(modifier)))  # pylint: disable=protected-access
+
+
+def _editing(window: MapWindow) -> TextEdit:
+    """The window's open text field."""
+    assert window.text_edit is not None
+    return window.text_edit
+
+
+def _submit(window: MapWindow, text: str) -> None:
+    """Types `text` into the open text field, replacing what it held, and presses Enter."""
+    field = _editing(window).field
+    field.value = text
+    window._on_field_done(cast(ft.Event[ft.TextField], _FieldEvent(field)))  # pylint: disable=protected-access
 
 
 def _fill_of(window: MapWindow, node: Node) -> cv.Rect:
@@ -386,10 +414,14 @@ def test_insert_tab_and_enter_add_a_node_and_select_it() -> None:
     child = goals.children[-1]
     assert window.selected is child and child.text == ""
     assert child in window.rects
-    assert page.updates == [(window.layer, window.surface)]
+    assert page.updates == [(window.layer, window.surface), (window.surface,)]
+    assert _editing(window).node is child
+    _press(window, "Escape")
 
     _press(window, "Enter")
     assert goals.children[-1] is window.selected is not child
+    assert _editing(window).node is window.selected
+    _press(window, "Escape")
 
     _press(window, "Tab")
     assert window.selected.text == "" and window.selected in goals.children[-1].children
@@ -494,3 +526,185 @@ def test_undo_with_nothing_to_undo_sends_nothing() -> None:
     _press_with(window, ["Control Left"], "Z")
     _press_with(window, ["Control Left"], "Y")
     assert page.updates == []
+
+
+@pytest.mark.parametrize(
+    ("key", "shift", "character"),
+    [
+        ("A", False, "a"),
+        ("A", True, "A"),
+        ("É", False, "é"),
+        ("1", False, "1"),
+        ("-", True, "-"),
+        (" ", False, None),
+        ("F2", False, None),
+        ("Arrow Up", False, None),
+    ],
+)
+def test_typed_character(key: str, shift: bool, character: str | None) -> None:
+    assert typed_character(key, shift) == character
+
+
+def test_f2_opens_a_field_over_the_node_holding_its_text_selected() -> None:
+    root, goals, _ = _tree()
+    window, page = _window(root)
+    window.select(goals)
+    page.updates.clear()
+    _press(window, "F2")
+
+    text_edit = _editing(window)
+    field, box = text_edit.field, text_edit.box
+    assert text_edit.node is goals
+    assert window.surface.controls == [window.layer, box] and box.content is field
+    assert field.value == "Goals"
+    assert field.selection == ft.TextSelection(0, 5)
+    rect = window.rects[goals]
+    assert (box.left, box.top, box.height) == (rect.x, rect.y, rect.height)
+    assert box.width == max(rect.width, MIN_FIELD_WIDTH)
+    assert page.updates == [(window.surface,)]
+    assert page.tasks == [field.focus]
+
+
+def test_typing_a_character_opens_the_field_holding_only_that_character() -> None:
+    root, goals, _ = _tree()
+    window, _ = _window(root)
+    window.select(goals)
+    _press_with(window, ["Shift Left"], "Q")
+    field = _editing(window).field
+    assert field.value == "Q"
+    assert field.selection == ft.TextSelection(1, 1)
+
+
+def test_enter_in_the_field_renames_the_node_and_lays_the_map_out_again() -> None:
+    """The node gets the field's text, without surrounding spaces; its box widens to fit;
+    the field closes; and the keyboard is handed back to the window."""
+    root, goals, _ = _tree()
+    window, page = _window(root)
+    window.select(goals)
+    _press(window, "F2")
+    field = _editing(window).field
+    width = window.rects[goals].width
+    page.updates.clear()
+
+    _submit(window, "  Goals and more  ")
+
+    assert goals.text == "Goals and more"
+    assert window.rects[goals].width > width
+    assert window.text_edit is None
+    assert window.surface.controls == [window.layer]
+    assert page.updates == [(window.layer, window.surface)]
+    assert page.tasks == [field.focus, cast(ft.KeyboardListener, window.keyboard).focus]
+    assert "Goals and more" in [text.value for _, _, text in _boxes(window.drawing)]
+
+
+def test_escape_closes_the_field_and_keeps_the_text() -> None:
+    root, goals, _ = _tree()
+    window, page = _window(root)
+    window.select(goals)
+    _press(window, "F2")
+    _editing(window).field.value = "Foo"
+    page.updates.clear()
+    _press(window, "Escape")
+
+    assert goals.text == "Goals"
+    assert window.text_edit is None and window.surface.controls == [window.layer]
+    assert page.updates == [(window.surface,)]
+    assert window.editor.undo_stack == []
+
+
+def test_keys_do_nothing_else_while_the_field_is_open() -> None:
+    """Arrows, Space, Delete, Insert, F2, letters and Ctrl+Z are left to the field."""
+    root, goals, _ = _tree()
+    window, _ = _window(root)
+    window.select(goals)
+    _press(window, "F2")
+    text_edit = _editing(window)
+    for key in ("Arrow Right", " ", "Delete", "Insert", "Enter", "F2", "A"):
+        _press(window, key)
+    window._on_key_repeat(cast(ft.KeyRepeatEvent, _Key("Arrow Up")))  # pylint: disable=protected-access
+    _press_with(window, ["Control Left"], "Z")
+
+    assert window.selected is goals and window.text_edit is text_edit
+    assert not goals.folded and [child.text for child in goals.children] == ["I/O", "TODO"]
+
+
+def test_a_short_node_gets_a_field_wide_enough_to_type_in() -> None:
+    """A new, empty node's field is `MIN_FIELD_WIDTH` wide, starting at the box's left edge."""
+    root, goals, _ = _tree()
+    window, _ = _window(root)
+    window.select(goals)
+    _press(window, "Insert")
+    box = _editing(window).box
+    rect = window.rects[window.selected]
+    assert rect.width < MIN_FIELD_WIDTH
+    assert (box.left, box.width) == (rect.x, MIN_FIELD_WIDTH)
+
+
+def test_the_field_widens_leftwards_on_the_left_side() -> None:
+    """On the left side, the field keeps its right edge on the box's right edge."""
+    root, _, risks = _tree()
+    window, _ = _window(root)
+    window.select(risks)
+    _press(window, "Insert")
+    box = _editing(window).box
+    rect = window.rects[window.selected]
+    assert cast(float, box.left) + cast(float, box.width) == rect.x + rect.width
+
+
+def test_a_field_already_closed_is_ignored() -> None:
+    """A late event from a field that was closed changes nothing."""
+    root, goals, _ = _tree()
+    window, _ = _window(root)
+    window.select(goals)
+    _press(window, "F2")
+    old = _editing(window).field
+    _press(window, "Escape")
+    _press(window, "F2")
+    current = window.text_edit
+
+    window._on_field_done(cast(ft.Event[ft.TextField], _FieldEvent(old)))  # pylint: disable=protected-access
+    assert window.text_edit is current and goals.text == "Goals"
+
+
+def test_clicking_while_the_field_is_open_keeps_its_text_then_clicks() -> None:
+    root, goals, _ = _tree()
+    window, _ = _window(root)
+    window.select(goals)
+    _press(window, "F2")
+    _editing(window).field.value = "Plans"
+    rect = window.rects[root]
+    _click(window, (rect.x + 2, rect.y + 2))
+
+    assert goals.text == "Plans"
+    assert window.text_edit is None and window.selected is root
+
+
+def test_a_new_node_named_then_undone_loses_its_name_then_itself() -> None:
+    """Naming a new node is its own change: the first Ctrl+Z empties its text, the second
+    removes it."""
+    root, goals, _ = _tree()
+    window, _ = _window(root)
+    window.select(goals)
+    _press(window, "Insert")
+    child = window.selected
+    _submit(window, "Foo")
+    assert child.text == "Foo"
+
+    _press_with(window, ["Control Left"], "Z")
+    assert child.text == "" and child in goals.children
+    _press_with(window, ["Control Left"], "Z")
+    assert child not in goals.children and window.selected is goals
+
+
+def test_the_field_is_drawn_unlike_any_node() -> None:
+    """The field is hollow: the canvas colour inside a border, text and cursor in the edge
+    colour."""
+    root, goals, _ = _tree()
+    window, _ = _window(root)
+    window.select(goals)
+    _press(window, "F2")
+    field, box = _editing(window).field, _editing(window).box
+
+    assert box.bgcolor == THEME.canvas
+    assert cast(ft.Border, box.border).top.color == THEME.edge
+    assert cast(ft.TextStyle, field.text_style).color == field.cursor_color == THEME.edge
