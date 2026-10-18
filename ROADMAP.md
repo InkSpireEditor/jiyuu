@@ -52,6 +52,8 @@ Status values: `todo`, `in progress`, `done`, `blocked: <reason>`.
 | Layout defaults: node padding 16px horizontal / 8px vertical each side, vertical gap between sibling subtrees 12px, horizontal gap between a parent's edge and its children's edge 48px | Concrete numbers needed to implement step 3; no visual design pass has been done — revisit once the viewer is on screen |
 | `.mm` read and written; Freeplane data jiyuu does not model is dropped | User has Freeplane maps |
 | A `.mm` file is never overwritten by autosave; editing it creates `<stem>.ink` beside it | Autosave would otherwise drop Freeplane data on every write |
+| "Keep mine" in the conflict banner writes the window's map over the changed file (step 12) | User's choice; writing to a side file instead left the conflict unresolvable |
+| Opening a `.mm` whose `<stem>.ink` exists asks for a new file name at the first change (step 12) | User's choice; that `.ink` may hold changes made the last time the `.mm` was opened |
 | Markdown: export only | User's choice |
 | Autosave, no explicit save. Debounce 1.5 s | User's choice |
 | Freeplane default shortcuts | User's choice |
@@ -1646,7 +1648,7 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
 
 ### Step 11: Editor UI
 
-- [x] Status: `done (223728d)`
+- [x] Status: `done (261e2cd)`
 - Depends on: 6, 10.
 - Keybinding table (Freeplane defaults; re-check these specific bindings against a current
   Freeplane install before wiring them, and record any correction here as a decision):
@@ -1747,7 +1749,7 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
 
 ### Step 12: Autosave
 
-- [ ] Status: `todo`
+- [ ] Status: `in progress`
 - Depends on: 9, 11.
 - Conflict handling, end to end:
 
@@ -1764,12 +1766,17 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
       else H1 != H0 (changed outside jiyuu since H0)
           Editor->>Editor: stop autosaving, show conflict banner
           Note over Editor: "reload" -> load(path) again, discard in-memory tree, H0 := H1
-          Note over Editor: "keep mine" -> write to <stem>.conflict.ink (never to path), H0 unchanged
+          Note over Editor: "keep mine" -> write the in-memory tree over path, H0 := hash of it
       end
   ```
 
+- **Changed with the user at the start of this step**: "keep mine" first wrote to
+  `<stem>.conflict.ink` and left `last_io_hash` unchanged, so the next autosave to `path`
+  found the same mismatch and showed the banner again; the conflict could never end. It
+  now writes the in-memory map over `path`, which the user chooses explicitly in the
+  banner.
 - Tasks:
-  - [ ] `jiyuu/document.py` (no Flet import):
+  - [x] `jiyuu/document.py` (no Flet import):
 
     ```python
     @dataclass
@@ -1798,29 +1805,70 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
         doc.last_io_hash = hashlib.blake2b(text).digest()
         doc.dirty = False
     ```
-  - [ ] Save 1.5 seconds after the last change (debounced: each new change restarts the
+    As built: `Document` also has `source`, the file opened, and `path` is `None` while a
+    `.mm`'s map has no file yet. `open_document(path)` replaces `cli._save_beside`: a
+    `.ink` is read once, and the hash is of the bytes parsed. `save` writes through
+    `formats.write_text_atomically` (a `mkstemp` temporary file in the same directory,
+    then `os.replace`). Also `save_as`, `keep_mine`, `reload`, `close`, `free_path`.
+  - [x] Save 1.5 seconds after the last change (debounced: each new change restarts the
         timer rather than queuing another save), and once more, synchronously, on window
-        close if `dirty` is still `True`.
-  - [ ] Opening a `.mm` file creates a `Document` whose `path` is `<stem>.ink` (never the
+        close if `dirty` is still `True`. As built: `document.Autosave` takes a `schedule`
+        function; the window's runs the save with `page.run_task` after `asyncio.sleep`,
+        on the event loop where Flet also calls the window's event handlers, so a save
+        never runs halfway through an edit. Every change the window shows goes through
+        `MapWindow.show_change`, which calls it. The save on close is `document.close`,
+        called by `jiyuu open` once `ft.run` returns; changes that cannot go to `path`
+        then (no file, or a conflict) go to a new file, `<stem>-2.ink` or
+        `<stem>.conflict.ink`, since nothing can be asked once the window is gone, and the
+        file written is printed. A save that raises `OSError` shows a banner with "Retry".
+  - [x] Opening a `.mm` file creates a `Document` whose `path` is `<stem>.ink` (never the
         `.mm` path itself). Since step 7, that file is already written when the `.mm`
         opens, unless it existed; in that case, prompt for a different name before the
-        first autosave can fire, rather than silently picking one.
-  - [ ] The conflict banner offers exactly two actions, matching the diagram: "reload"
+        first autosave can fire, rather than silently picking one. As built: at the first
+        change, a modal dialog explains that `<stem>.ink` exists and asks for a name,
+        prefilled with the first free `<stem>-N.ink`, in the `.mm`'s folder; `.ink` is
+        added if missing; a name already taken is refused in the field. The window title
+        then shows the new file's name.
+  - [x] The conflict banner offers exactly two actions, matching the diagram: "reload"
         (re-`load`s `path`, replacing the in-memory tree, clears `conflicted`) and "keep
-        mine" (writes the in-memory tree to `<stem>.conflict.ink`, leaves `path` and
-        `last_io_hash` untouched, clears `conflicted` so autosave resumes targeting the
-        *original* `path` on the next change).
+        mine" (writes the in-memory tree over `path`, clears `conflicted`). A file that
+        cannot be read on "reload" keeps the banner, with the reason. Reloading shows the
+        new map with the root selected and drops the undo history.
+  - [x] The file is also checked every second (`ui.saving.WATCH_INTERVAL`,
+        `document.changed_on_disk`), not only before a save. Added after the first hand
+        check: editing the file in a text editor showed no banner, because the check ran
+        only when jiyuu next saved a change of its own. The order this step's done
+        condition describes (jiyuu, then the text editor) needs the check without a
+        further edit. In a real window the banner was visible 0.3 s after the file changed.
 - Tests:
-  - [ ] The debounce logic, driven by a fake/injectable clock: five changes within 1.5s
-        produce exactly one save call.
-  - [ ] Opening a `.mm` and triggering an autosave never writes to the `.mm` path.
-  - [ ] Modifying the file on disk between two saves is detected (the second `save()` call
-        sets `conflicted` instead of overwriting it).
-  - [ ] A write that fails partway (simulate by making the temp-file write raise) leaves the
+  - [x] The debounce logic, driven by a fake/injectable clock: five changes within 1.5s
+        produce exactly one save call (`tests/test_document.py`).
+  - [x] Opening a `.mm` and triggering an autosave never writes to the `.mm` path.
+  - [x] Modifying the file on disk between two saves is detected (the second `save()` call
+        sets `conflicted` instead of overwriting it). A deleted file is a conflict too.
+  - [x] A write that fails partway (simulate by making the temp-file write raise) leaves the
         original file at `path` byte-for-byte unchanged, because of the atomic
         write-then-`os.replace` guard.
+  - [x] `keep_mine`, `reload` (and of an unreadable file), `save_as` refusing an existing
+        file, `close` in each case, `free_path`, `changed_on_disk`.
+  - [x] In the window (`tests/test_ui.py`): a later change cancels the save scheduled by
+        the one before; the banner and "Reload"; "Keep mine"; the name dialog; "Retry"
+        after a failed save; the check every second shows the banner with no edit, and drops
+        a save waiting to happen. `jiyuu open` saves changes left at close
+        (`tests/test_cli.py`).
+  - [x] Checked in a real window on a copy of `worked-example.ink`: a change is in the file
+        after 2 s and not after 0.5 s; changing the file on disk then making a change
+        shows the banner and leaves the file alone; "Keep mine" writes over it.
 - Done when: the tests above pass, and a manual check confirms the conflict banner appears
   after editing the same file in jiyuu and, separately, in a text editor, in that order.
+- Hand checklist (on a copy of a map):
+  - [ ] An edit in jiyuu reaches the `.ink` file about 1.5 s later.
+  - [ ] Editing the file in a text editor and saving it shows the banner within about a
+        second; "Reload" shows the text editor's version; repeat, "Keep mine" writes
+        jiyuu's version over it.
+  - [ ] Opening a `.mm` whose `.ink` already exists: the first edit asks for a name; the
+        title shows it; the old `.ink` is unchanged.
+  - [ ] Closing the window right after an edit: the terminal names the file saved.
 
 ### Step 13: `.mm` export
 

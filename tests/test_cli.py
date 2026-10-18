@@ -9,7 +9,7 @@ from typer.testing import CliRunner
 from jiyuu import __version__
 from jiyuu.cli import app
 from jiyuu.formats import ink
-from jiyuu.model import MindMap
+from jiyuu.document import Document
 from jiyuu.theme import DEFAULT_THEME, Theme, load_theme
 
 runner = CliRunner()
@@ -67,15 +67,20 @@ def test_open_hands_the_map_and_theme_to_the_window(
     """`jiyuu open` reads the file and the theme, then passes both to the window."""
     opened: dict = {}
 
-    def fake_run(mindmap: MindMap, path: Path, theme: Theme) -> None:
-        opened.update(root=mindmap.root.text, path=path, theme=theme.name)
+    def fake_run(doc: Document, theme: Theme) -> None:
+        opened.update(root=doc.mindmap.root.text, source=doc.source, path=doc.path, theme=theme.name)
 
     monkeypatch.setattr("jiyuu.ui.app.run", fake_run)
     path = _fixture_copy(tmp_path, "worked-example.mm")
     result = runner.invoke(app, ["open", str(path), "--theme", "solarized-dark"])
 
     assert result.exit_code == 0
-    assert opened == {"root": "Project", "path": path, "theme": "Solarized Dark"}
+    assert opened == {
+        "root": "Project",
+        "source": path,
+        "path": path.with_suffix(".ink"),
+        "theme": "Solarized Dark",
+    }
 
 
 def test_open_uses_the_default_theme_when_none_is_given(
@@ -83,7 +88,7 @@ def test_open_uses_the_default_theme_when_none_is_given(
 ) -> None:
     """With no `--theme`, the window gets the default theme."""
     themes: list[str] = []
-    monkeypatch.setattr("jiyuu.ui.app.run", lambda mindmap, path, theme: themes.append(theme.name))
+    monkeypatch.setattr("jiyuu.ui.app.run", lambda doc, theme: themes.append(theme.name))
     result = runner.invoke(app, ["open", str(_fixture_copy(tmp_path, "worked-example.mm"))])
 
     assert result.exit_code == 0
@@ -166,9 +171,10 @@ def test_open_records_a_side_for_every_first_level_node(
 
 
 def test_open_never_overwrites_an_existing_ink(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """A `.ink` already beside the `.mm` is left untouched, and the window still opens."""
-    calls: list[object] = []
-    monkeypatch.setattr("jiyuu.ui.app.run", lambda *args: calls.append(args))
+    """A `.ink` already beside the `.mm` is left untouched, and the window still opens,
+    with no file to save to until one is named."""
+    docs: list[Document] = []
+    monkeypatch.setattr("jiyuu.ui.app.run", lambda doc, theme: docs.append(doc))
     path = _fixture_copy(tmp_path, "worked-example.mm")
     existing = path.with_suffix(".ink")
     existing.write_text("- edited by hand\n", encoding="utf-8")
@@ -176,7 +182,27 @@ def test_open_never_overwrites_an_existing_ink(monkeypatch: pytest.MonkeyPatch, 
 
     assert result.exit_code == 0
     assert existing.read_text(encoding="utf-8") == "- edited by hand\n"
-    assert len(calls) == 1
+    assert [doc.path for doc in docs] == [None]
+
+
+def test_open_saves_changes_left_unsaved_when_the_window_closes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A change made just before the window closes, not yet saved, is saved after it
+    closes, and the file is named on the terminal."""
+
+    def edit(doc: Document, _theme: Theme) -> None:
+        doc.mindmap.root.text = "Plans"
+        doc.dirty = True
+
+    monkeypatch.setattr("jiyuu.ui.app.run", edit)
+    path = tmp_path / "map.ink"
+    path.write_text("- Project\n  - Goals\n", encoding="utf-8")
+    result = runner.invoke(app, ["open", str(path)])
+
+    assert result.exit_code == 0
+    assert "- Plans\n  - Goals\n" in path.read_text(encoding="utf-8")
+    assert f"{path}: changes saved" in result.output
 
 
 def test_opening_an_ink_file_writes_nothing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

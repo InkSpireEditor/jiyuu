@@ -26,7 +26,8 @@ Keys that change the map, each acting on the selected node (see `jiyuu.editing`)
   parent; on a node directly under the root, it moves the node to the root's other side;
 - Ctrl+Z undoes the latest change, folds included; Ctrl+Y and Ctrl+Shift+Z redo it.
 
-Nothing in this window writes the map to a file.
+Every change, folds included, is saved to the map's file shortly after it is made (see
+`jiyuu.ui.saving`).
 
 Nodes are drawn as shapes on canvases (see `jiyuu.ui.canvas`), which cannot receive a click
 of their own; a click is matched to a node by where it lands on the map.
@@ -55,11 +56,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
 from typing import cast
 
 import flet as ft
 
+from ..document import Document
 from ..editing import Editor
 from ..layout import Edge, LayoutSettings, Plane, Rect, layout
 from ..measure import DEFAULT_FONT_PATH, DEFAULT_FONT_SIZE, PillowMeasurer
@@ -68,6 +69,7 @@ from ..navigation import DOWN, HOME, LEFT, RIGHT, UP, Navigator, is_inside
 from ..theme import Theme
 from ..view import View
 from .canvas import CORNER_RADIUS, FONT_FAMILY, MapDrawing
+from .saving import Saving, window_title
 
 #: How much a Ctrl + two-finger vertical move zooms: each pixel moved multiplies the scale
 #: by `1 + ZOOM_PER_PIXEL * pixels`. The sign was chosen by hand on a trackpad with natural
@@ -141,9 +143,9 @@ class MapWindow:
     """The window's state — the map, its layout, the drawing surface, the view — and its
     controls."""
 
-    def __init__(self, page: ft.Page, mindmap: MindMap, theme: Theme) -> None:
+    def __init__(self, page: ft.Page, doc: Document, theme: Theme) -> None:
         self.page = page
-        self.mindmap = mindmap
+        mindmap = self.mindmap = doc.mindmap
         self.theme = theme
         self.measurer = PillowMeasurer(DEFAULT_FONT_PATH)
         self.settings = LayoutSettings()
@@ -153,8 +155,9 @@ class MapWindow:
         self.view = View()
         #: The window area the map is shown in, once its size is known.
         self.window_size: tuple[float, float] | None = None
-        self.ctrl_held = False
-        self.shift_held = False
+        #: The modifier keys held down: `"Control"` and `"Shift"`, whichever side of the
+        #: keyboard they are on.
+        self.held: set[str] = set()
         self.editor = Editor(mindmap.root)
         #: The node whose text is being edited, if any, and the field it is edited in.
         self.text_edit: TextEdit | None = None
@@ -167,6 +170,7 @@ class MapWindow:
         #: The map's drawing surface. Its `left`, `top` and `scale` are the view.
         self.surface = ft.Stack(controls=[self.layer])
         self.drawing = MapDrawing(theme, self.settings)
+        self.saving = Saving(page, doc, theme, self.show_map, self.take_keyboard)
 
     def control(self) -> ft.Control:
         """The window's whole content."""
@@ -294,8 +298,25 @@ class MapWindow:
             self.show_change(text_edit.node)
         else:
             self.page.update(self.surface)
+        self.take_keyboard()
+
+    def take_keyboard(self) -> None:
+        """Gives the keyboard back to the window, for its own keys to work again."""
         if self.keyboard is not None:
             self.page.run_task(self.keyboard.focus)
+
+    def show_map(self, mindmap: MindMap) -> None:
+        """Shows `mindmap` instead of the map shown so far, with the root selected. The undo
+        history of the map shown so far is dropped."""
+        if self.text_edit is not None:
+            self.text_edit = None
+            self.surface.controls = [self.layer]
+        self.mindmap = mindmap
+        self.editor = Editor(mindmap.root)
+        self.navigator = Navigator(mindmap.root)
+        self.selected = mindmap.root
+        self.redraw()
+        self.page.update(self.layer, self.surface)
 
     def _on_field_done(self, event: ft.Event[ft.TextField]) -> None:
         # Called when Enter submits the field and when the field loses the keyboard. One
@@ -328,6 +349,7 @@ class MapWindow:
         """Lays out and redraws the map after a change to its tree, with `selected` selected
         and, if `reveal`, panned into the window; sends the drawing and the surface."""
         self.selected = selected
+        self.saving.changed()
         self.redraw()
         if reveal and self.window_size is not None:
             self.view.reveal(self.rects[selected], *self.window_size, REVEAL_MARGIN)
@@ -394,11 +416,20 @@ class MapWindow:
         if node is not None:
             self.select(node)
 
+    @property
+    def ctrl_held(self) -> bool:
+        """Whether Ctrl is held down."""
+        return "Control" in self.held
+
+    @property
+    def shift_held(self) -> bool:
+        """Whether Shift is held down."""
+        return "Shift" in self.held
+
     def _on_key_down(self, event: ft.KeyDownEvent) -> None:
-        if event.key.startswith("Control"):
-            self.ctrl_held = True
-        elif event.key.startswith("Shift"):
-            self.shift_held = True
+        modifier = _modifier(event.key)
+        if modifier is not None:
+            self.held.add(modifier)
         elif self.text_edit is not None:
             # Every other key is the text field's own while it is open.
             if event.key == "Escape":
@@ -458,21 +489,27 @@ class MapWindow:
             self.redo()
 
     def _on_key_up(self, event: ft.KeyUpEvent) -> None:
-        if event.key.startswith("Control"):
-            self.ctrl_held = False
-        elif event.key.startswith("Shift"):
-            self.shift_held = False
+        self.held.discard(_modifier(event.key) or "")
 
 
-def run(mindmap: MindMap, path: Path, theme: Theme) -> None:
-    """Opens a window showing `mindmap`, read from `path`, in `theme`; returns when it closes."""
+def _modifier(key: str) -> str | None:
+    """`"Control"` or `"Shift"` if `key`, as Flet names it, is one of those keys, on either
+    side of the keyboard (`"Control Left"`, `"Shift Right"`, ...); otherwise `None`."""
+    for modifier in ("Control", "Shift"):
+        if key.startswith(modifier):
+            return modifier
+    return None
+
+
+def run(doc: Document, theme: Theme) -> None:
+    """Opens a window showing `doc`'s map in `theme`; returns when it closes."""
 
     def main(page: ft.Page) -> None:
-        page.title = f"{path.name} — jiyuu"
+        page.title = window_title(doc)
         page.fonts = {FONT_FAMILY: DEFAULT_FONT_PATH}
         page.bgcolor = theme.canvas
         page.padding = 0
-        window = MapWindow(page, mindmap, theme)
+        window = MapWindow(page, doc, theme)
         window.redraw()
         page.add(window.control())
 

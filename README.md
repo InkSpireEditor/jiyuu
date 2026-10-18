@@ -67,7 +67,12 @@ In the window:
 | Ctrl+Z | Undo the latest change, folds included |
 | Ctrl+Y, Ctrl+Shift+Z | Redo |
 
-Changes made in the window are not saved yet.
+Changes are saved automatically, 1.5 seconds after the last one, to the `.ink` file the
+map was opened from. A `.mm` file is never written: opening one writes a `.ink` copy beside
+it, and changes are saved there; if that `.ink` already exists, the window asks for another
+name at the first change. If the file is changed by another program while the map is open, a
+banner appears within about a second, and nothing more is saved until you choose to reload
+the file or to keep the window's version over it.
 
 ## Development
 

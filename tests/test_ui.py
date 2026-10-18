@@ -1,12 +1,16 @@
 """Tests for the parts of jiyuu's window that can be checked without opening one: which
 shapes a map is drawn with, in which colours, and what a click or a key does."""
 
+import asyncio
+from collections.abc import Callable, Coroutine
+from pathlib import Path
 from typing import cast
 
 import flet as ft
 import flet.canvas as cv
 import pytest
 
+from jiyuu.document import Document, open_document
 from jiyuu.layout import LayoutSettings, Plane, layout
 from jiyuu.measure import FixedMeasurer
 from jiyuu.model import MindMap, Node
@@ -183,21 +187,52 @@ def test_node_at_and_marker_at_find_what_a_point_is_on() -> None:
     assert drawing.node_at(io_rect.x + 1, io_rect.y + 1) is None
 
 
+class _Task:
+    """Stands in for a task started by `run_task`: records whether it was cancelled, and
+    whether a test has run it."""
+
+    def __init__(self, handler: object) -> None:
+        self.handler = handler
+        self.cancelled = False
+        self.ran = False
+
+    def cancel(self) -> bool:
+        """Records the task as cancelled."""
+        self.cancelled = True
+        return True
+
+
 class _Page:
-    """Stands in for a page: records each call to `update` and `run_task` instead of
-    sending or running anything."""
+    """Stands in for a page: records each call to `update`, `run_task`, `show_dialog` and
+    `pop_dialog` instead of sending or running anything."""
 
     def __init__(self) -> None:
         self.updates: list[tuple[ft.Control, ...]] = []
-        self.tasks: list[object] = []
+        self.tasks: list[_Task] = []
+        self.dialogs: list[ft.DialogControl] = []
+        self.title = ""
 
     def update(self, *controls: ft.Control) -> None:
         """Records `controls` as one update."""
         self.updates.append(controls)
 
-    def run_task(self, task: object) -> None:
-        """Records `task` as one task to run."""
+    def run_task(self, handler: object) -> _Task:
+        """Records `handler` as one task to run, without running it."""
+        task = _Task(handler)
         self.tasks.append(task)
+        return task
+
+    def show_dialog(self, dialog: ft.DialogControl) -> None:
+        """Records `dialog` as shown."""
+        self.dialogs.append(dialog)
+
+    def pop_dialog(self) -> None:
+        """Records the latest dialog shown as closed."""
+        self.dialogs.pop()
+
+    def handlers(self) -> list[object]:
+        """What each task recorded was started with."""
+        return [task.handler for task in self.tasks]
 
 
 class _FieldEvent:
@@ -214,11 +249,13 @@ class _Key:
         self.key = key
 
 
-def _window(root: Node) -> tuple[MapWindow, _Page]:
-    """A window over `root`, laid out, at a known size, and the page standing in for the
-    screen it would send to."""
+def _window(root: Node, path: Path = Path("map.ink")) -> tuple[MapWindow, _Page]:
+    """A window over `root`, saved to `path`, laid out, at a known size, and the page
+    standing in for the screen it would send to. The page runs no task, so no save is ever
+    made unless a test runs one itself."""
     page = _Page()
-    window = MapWindow(cast(ft.Page, page), MindMap(root=root), THEME)
+    doc = Document(source=path, path=path, mindmap=MindMap(root=root), last_io_hash=b"")
+    window = MapWindow(cast(ft.Page, page), doc, THEME)
     window.control()
     window.redraw()
     window.window_size = (800.0, 600.0)
@@ -562,7 +599,7 @@ def test_f2_opens_a_field_over_the_node_holding_its_text_selected() -> None:
     assert (box.left, box.top, box.height) == (rect.x, rect.y, rect.height)
     assert box.width == max(rect.width, MIN_FIELD_WIDTH)
     assert page.updates == [(window.surface,)]
-    assert page.tasks == [field.focus]
+    assert page.handlers()[-1] == field.focus
 
 
 def test_typing_a_character_opens_the_field_holding_only_that_character() -> None:
@@ -593,7 +630,8 @@ def test_enter_in_the_field_renames_the_node_and_lays_the_map_out_again() -> Non
     assert window.text_edit is None
     assert window.surface.controls == [window.layer]
     assert page.updates == [(window.layer, window.surface)]
-    assert page.tasks == [field.focus, cast(ft.KeyboardListener, window.keyboard).focus]
+    assert field.focus in page.handlers()
+    assert cast(ft.KeyboardListener, window.keyboard).focus in page.handlers()
     assert "Goals and more" in [text.value for _, _, text in _boxes(window.drawing)]
 
 
@@ -708,3 +746,175 @@ def test_the_field_is_drawn_unlike_any_node() -> None:
     assert box.bgcolor == THEME.canvas
     assert cast(ft.Border, box.border).top.color == THEME.edge
     assert cast(ft.TextStyle, field.text_style).color == field.cursor_color == THEME.edge
+
+
+async def _no_wait(_seconds: float) -> None:
+    """Stands in for `asyncio.sleep`, returning at once."""
+
+
+def _run_saves(page: _Page, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Runs every save the page was asked to schedule, and that was neither cancelled nor
+    run already, without waiting for its delay."""
+    monkeypatch.setattr("jiyuu.ui.saving.asyncio.sleep", _no_wait)
+    for task in list(page.tasks):
+        if not task.cancelled and not task.ran and getattr(task.handler, "__name__", "") == "later":
+            task.ran = True
+            asyncio.run(cast(Callable[[], Coroutine[None, None, None]], task.handler)())
+
+
+def _ink_window(tmp_path: Path) -> tuple[MapWindow, _Page, Path]:
+    """A window over the map in a new `.ink` file in `tmp_path`, and that file."""
+    path = tmp_path / "map.ink"
+    path.write_text("- Project\n  - Goals\n  - Risks\n", encoding="utf-8")
+    doc, _ = open_document(path)
+    assert doc is not None
+    page = _Page()
+    window = MapWindow(cast(ft.Page, page), doc, THEME)
+    window.control()
+    window.redraw()
+    window.window_size = (800.0, 600.0)
+    return window, page, path
+
+
+def _click_button(dialog: ft.DialogControl, label: str) -> None:
+    """Clicks the button labelled `label` in a banner's or dialog's actions."""
+    for button in cast(ft.Banner, dialog).actions:
+        button = cast(ft.TextButton, button)
+        if cast(ft.Text, button.content).value == label:
+            cast(Callable[[object], None], button.on_click)(None)
+            return
+    raise LookupError(label)
+
+
+def test_a_change_is_saved_once_after_the_last_of_several(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Each change cancels the save the one before it scheduled; running the one left saves
+    the map."""
+    window, page, path = _ink_window(tmp_path)
+    _press(window, "Arrow Right")
+    _press(window, "Insert")
+    _submit(window, "Foo")
+
+    saves = [task for task in page.tasks if getattr(task.handler, "__name__", "") == "later"]
+    assert [task.cancelled for task in saves] == [True, False]
+    _run_saves(page, monkeypatch)
+    assert "    - Foo\n" in path.read_text(encoding="utf-8")
+
+
+def test_a_file_changed_on_disk_shows_a_banner_and_reload_shows_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window, page, path = _ink_window(tmp_path)
+    path.write_text("- Edited elsewhere\n  - Foo\n", encoding="utf-8")
+    _press(window, "Delete")  # the root: nothing changes, nothing is scheduled
+    _press(window, "Arrow Right")
+    _press(window, " ")
+    _press(window, "Insert")
+    _run_saves(page, monkeypatch)
+
+    (banner,) = page.dialogs
+    assert isinstance(banner, ft.Banner)
+    assert "changed outside jiyuu" in cast(ft.Text, banner.content).value
+    assert "Edited elsewhere" in path.read_text(encoding="utf-8")
+
+    _click_button(banner, "Reload")
+    assert page.dialogs == []
+    assert window.mindmap.root.text == "Edited elsewhere"
+    assert window.selected is window.mindmap.root
+    assert "Edited elsewhere" in [text.value for _, _, text in _boxes(window.drawing)]
+
+
+def test_keep_mine_writes_the_window_s_map_over_the_changed_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window, page, path = _ink_window(tmp_path)
+    path.write_text("- Edited elsewhere\n", encoding="utf-8")
+    _press(window, "F2")
+    _submit(window, "Plans")
+    _run_saves(page, monkeypatch)
+
+    _click_button(page.dialogs[0], "Keep mine")
+    assert page.dialogs == []
+    assert "- Plans\n" in path.read_text(encoding="utf-8")
+
+
+def test_a_map_with_no_file_asks_for_a_name_at_its_first_change(tmp_path: Path) -> None:
+    """The dialog suggests the first free name; a name already taken is refused; a free
+    one is saved to, and becomes the window's title."""
+    source = tmp_path / "worked-example.mm"
+    source.write_text('<map><node TEXT="Project"><node TEXT="Goals"/></node></map>', encoding="utf-8")
+    (tmp_path / "worked-example.ink").write_text("- Earlier\n", encoding="utf-8")
+    doc, _ = open_document(source)
+    assert doc is not None and doc.path is None
+    page = _Page()
+    window = MapWindow(cast(ft.Page, page), doc, THEME)
+    window.control()
+    window.redraw()
+    _press(window, "Insert")
+
+    (dialog,) = page.dialogs
+    field = cast(ft.TextField, window.saving.name_field)
+    assert isinstance(dialog, ft.AlertDialog)
+    assert field.value == "worked-example-2.ink"
+
+    field.value = "worked-example"
+    _click_button(dialog, "Save")
+    assert field.error == "worked-example.ink already exists"
+    assert page.dialogs == [dialog]
+
+    field.value = "plans"
+    _click_button(dialog, "Save")
+    assert page.dialogs == []
+    assert doc.path == tmp_path / "plans.ink" and doc.path.exists()
+    assert page.title == "plans.ink — jiyuu"
+    assert (tmp_path / "worked-example.ink").read_text(encoding="utf-8") == "- Earlier\n"
+
+
+def test_a_save_that_fails_shows_a_banner_offering_to_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window, page, path = _ink_window(tmp_path)
+    _press(window, " ")  # the root cannot fold: nothing to save
+    _press(window, "Arrow Right")
+    _press(window, "Insert")
+
+    def failing(_path: Path, _text: str) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr("jiyuu.document.write_text_atomically", failing)
+    _run_saves(page, monkeypatch)
+    (banner,) = page.dialogs
+    assert "disk full" in cast(ft.Text, cast(ft.Banner, banner).content).value
+
+    monkeypatch.undo()
+    _click_button(banner, "Retry")
+    assert page.dialogs == []
+    _run_saves(page, monkeypatch)
+    assert path.read_text(encoding="utf-8").count("  - ") == 3
+
+
+def test_a_file_changed_on_disk_shows_the_banner_without_a_change_in_the_window(tmp_path: Path) -> None:
+    """The check made every second finds the change; nothing was edited in the window. A
+    second check while the banner is shown shows nothing more."""
+    window, page, path = _ink_window(tmp_path)
+    window.saving.check_disk()
+    assert page.dialogs == []
+
+    path.write_text("- Edited elsewhere\n", encoding="utf-8")
+    window.saving.check_disk()
+    window.saving.check_disk()
+    (banner,) = page.dialogs
+    assert isinstance(banner, ft.Banner)
+    assert window.saving.doc.conflicted
+
+    _click_button(banner, "Reload")
+    assert window.mindmap.root.text == "Edited elsewhere"
+
+
+def test_the_check_drops_a_save_waiting_to_happen(tmp_path: Path) -> None:
+    window, page, path = _ink_window(tmp_path)
+    _press(window, "Arrow Right")
+    _press(window, "Insert")
+    path.write_text("- Edited elsewhere\n", encoding="utf-8")
+    window.saving.check_disk()
+    saves = [task for task in page.tasks if getattr(task.handler, "__name__", "") == "later"]
+    assert all(task.cancelled for task in saves)
