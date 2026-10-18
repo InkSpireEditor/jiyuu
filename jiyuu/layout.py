@@ -124,7 +124,7 @@ def subtree_height(
     return max(own_height, _column_height(node.children, measurer, settings))
 
 
-def _resolve_sides(root: Node, measurer: Measurer, settings: LayoutSettings) -> None:
+def resolve_sides(root: Node, measurer: Measurer, settings: LayoutSettings) -> None:
     """Assigns `"left"` or `"right"` to every one of `root`'s children that has no side yet.
 
     Processed in the order the children were written in: a child with a side already set
@@ -234,13 +234,13 @@ def layout(
     from the layout entirely, not just from being drawn, so a caller never has to filter
     hidden nodes out of the result itself.
 
-    Resolves every one of `root`'s children's sides first (see `_resolve_sides`), so the two
+    Resolves every one of `root`'s children's sides first (see `resolve_sides`), so the two
     passes that follow, and the edges built from their result, all agree on where every
     first-level node ends up. The root's own box is centred on `(0, 0)`; everything else is
     placed outward from it, so the whole plane's vertical extent is centred on `y = 0` too.
     """
     settings = settings if settings is not None else LayoutSettings()
-    _resolve_sides(root, measurer, settings)
+    resolve_sides(root, measurer, settings)
 
     rects: dict[Node, Rect] = {}
     height = subtree_height(root, measurer, settings, is_root=True)

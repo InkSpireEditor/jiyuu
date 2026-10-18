@@ -5,9 +5,10 @@ A mindmap viewer, similar to FreeMind and Freeplane, written in Python with
 draws them with the root in the middle and its branches growing to the left and right, in one
 of several colour themes.
 
-An `.ink` map is plain text, editable in any text editor: a `meta` section, then the tree as
-an indented list. Opening a `.mm` file writes a `.ink` copy of it beside it, unless one is
-already there:
+An `.ink` map is plain text, editable in any text editor: a `meta` section, the tree as an
+indented list, then a `nodes` section recording which side of the root each branch is drawn
+on and which nodes are folded. Opening a `.mm` file writes a `.ink` copy of it beside it,
+unless one is already there:
 
 ```
 ===== ink:meta
@@ -16,7 +17,14 @@ kind: mindmap
 - Project
   - Goals
   - Risks
+===== ink:nodes
+"7be48fc73f0ebe9c": {side: "right", folded: "true"}
+"32a21dfedf2cf99c": {side: "left"}
 ```
+
+Each `nodes` line is keyed by an id computed from the node's text and the text of the nodes
+above it. Renaming or moving a node in a text editor changes its id, so its line no longer
+applies: the node opens unfolded, and its side is chosen again.
 
 ## Install
 
@@ -29,7 +37,7 @@ poetry install
 ```bash
 poetry run jiyuu open path/to/map.mm                       # in the default theme
 poetry run jiyuu open path/to/map.ink --theme solarized-dark
-poetry run jiyuu check path/to/map.ink                     # list problems, by line
+poetry run jiyuu check path/to/map.ink                     # list problems; fails on an error
 ```
 
 The bundled themes are `tokyonight-night` (the default), `nord`, `nord-frost`, `nord-aurora`

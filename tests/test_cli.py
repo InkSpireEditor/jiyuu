@@ -130,9 +130,39 @@ def test_open_writes_the_map_as_ink_beside_it(monkeypatch: pytest.MonkeyPatch, t
 
     assert result.exit_code == 0
     assert path.read_bytes() == original
+    assert path.with_suffix(".ink").read_text(encoding="utf-8") == (
+        "===== ink:meta\n"
+        "kind: mindmap\n"
+        "===== ink:body\n"
+        "- Project\n"
+        "  - Goals\n"
+        "    - I/O\n"
+        "  - Risks\n"
+        "    - Flet performance\n"
+        "===== ink:nodes\n"
+        '"7be48fc73f0ebe9c": {side: "right"}\n'
+        '"32a21dfedf2cf99c": {side: "left", folded: "true"}\n'
+    )
+
+
+def test_open_records_a_side_for_every_first_level_node(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A `.mm` whose first-level nodes have no `POSITION` still gets a side written for
+    each of them in the `.ink`, decided the way the window's layout decides it."""
+    monkeypatch.setattr("jiyuu.ui.app.run", lambda *args: None)
+    path = tmp_path / "map.mm"
+    path.write_text(
+        '<map><node TEXT="Project"><node TEXT="Goals"/><node TEXT="Risks"/></node></map>',
+        encoding="utf-8",
+    )
+    result = runner.invoke(app, ["open", str(path)])
+
+    assert result.exit_code == 0
     written = ink.parse(path.with_suffix(".ink").read_text(encoding="utf-8"))
-    assert written.metadata == {"kind": "mindmap"}
-    assert written.body == "- Project\n  - Goals\n    - I/O\n  - Risks\n    - Flet performance\n"
+    assert written.sections == {
+        "nodes": '"7be48fc73f0ebe9c": {side: "right"}\n"32a21dfedf2cf99c": {side: "left"}\n'
+    }
 
 
 def test_open_never_overwrites_an_existing_ink(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -171,10 +201,26 @@ def test_check_on_a_clean_ink_file_prints_nothing() -> None:
 
 
 def test_check_on_a_hand_edited_ink_file_prints_its_problems_by_line(tmp_path: Path) -> None:
-    """A problem in a `.ink` file is printed with its line number in the whole file, and
-    the command still succeeds, since a map could be read."""
+    """A warning in a `.ink` file is printed with the path and its line number in the whole
+    file, and the command still succeeds."""
     path = tmp_path / "map.ink"
     path.write_text("===== ink:meta\nkind: mindmap\n===== ink:body\n- Project\n  Goals\n", encoding="utf-8")
     result = runner.invoke(app, ["check", str(path)])
     assert result.exit_code == 0
-    assert result.stdout == "line 5: warning: this line has no '-', '*' or '+' marker\n"
+    assert result.stdout == f"{path}:5: warning: this line has no '-', '*' or '+' marker\n"
+
+
+def test_check_on_an_ink_file_with_an_error_exits_non_zero(tmp_path: Path) -> None:
+    """An error fails the command, even though a map could still be read."""
+    path = tmp_path / "map.ink"
+    path.write_text("===== ink:meta\nkind: mindmap\n===== ink:body\n- Project\n- Extra\n", encoding="utf-8")
+    result = runner.invoke(app, ["check", str(path)])
+    assert result.exit_code != 0
+    assert result.stdout.startswith(f"{path}:5: error: ")
+
+
+def test_check_prints_mm_problems_with_no_line_number() -> None:
+    """The `.mm` reader does not track lines, so its problems name only the file."""
+    path = MM_FIXTURES / "freeplane-extras.mm"
+    result = runner.invoke(app, ["check", str(path)])
+    assert result.stdout.startswith(f"{path}: warning: ")

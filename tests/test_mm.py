@@ -187,17 +187,25 @@ def test_read_map_picks_the_reader_from_the_extension() -> None:
     assert warnings == []
 
 
+def test_read_map_marks_a_mm_file_it_could_not_read_as_an_error() -> None:
+    """The `.mm` reader's other messages are warnings; the one it gave up on is an error."""
+    mindmap, problems = read_map(FIXTURES / "malformed.mm")
+    assert mindmap is None
+    assert problems[-1].level == "error"
+    assert "could not be parsed" in problems[-1].message
+
+
 def test_read_map_refuses_an_extension_it_has_no_reader_for(tmp_path: Path) -> None:
     """An extension with no reader gives no map and says why, rather than guessing."""
     path = tmp_path / "map.txt"
     path.write_text("Project", encoding="utf-8")
     mindmap, warnings = read_map(path)
     assert mindmap is None
-    assert "no reader" in warnings[0]
+    assert "no reader" in warnings[0].message
 
 
 def test_read_map_reports_a_file_that_cannot_be_read(tmp_path: Path) -> None:
     """A missing file gives no map and a warning, not an exception."""
     mindmap, warnings = read_map(tmp_path / "missing.mm")
     assert mindmap is None
-    assert "cannot be read" in warnings[0]
+    assert "cannot be read" in warnings[0].message

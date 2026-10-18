@@ -71,11 +71,8 @@ def _read_node(element: Element, *, depth: int, warnings: list[str]) -> Node:
     """`element` and everything under it, as a `Node` tree.
 
     `depth` is `element`'s own distance from the map's root — `0` for the root itself, `1`
-    for a first-level node, more for everything deeper. `POSITION` means something only at
-    depth `1`: a plain `is_first_level` flag was tried first and found not to carry enough
-    information on its own, since the single call processing the root needs to tell its own
-    children they are first-level while knowing itself is not — a distinction a flag that
-    only describes "myself" cannot make for "my children" too.
+    for a first-level node, more for everything deeper. `POSITION` is read only at depth
+    `1`, since only a child of the root is drawn on a side of its own.
     """
     node = Node(text=_node_text(element, warnings))
     node.folded = element.get("FOLDED") == "true"

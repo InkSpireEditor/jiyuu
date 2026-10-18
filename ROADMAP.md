@@ -260,8 +260,8 @@ hashed):
 | Risks | `[["Risks", 1]]` | `32a21dfedf2cf99c` |
 | Goals → I/O | `[["Goals", 1], ["I/O", 1]]` | `3a3e72d688ada732` |
 | Risks → Flet performance | `[["Risks", 1], ["Flet performance", 1]]` | `1beebbe825bf2289` |
-| Goals → TODO (1st) | `[["Goals", 1], ["TODO", 1]]` | `93daa0a88332d655` |
-| Goals → TODO (2nd) | `[["Goals", 1], ["TODO", 2]]` | `57b391dbe76f697e` |
+| Goals → TODO (1st) | `[["Goals", 1], ["TODO", 1]]` | `ef079784f78e907e` |
+| Goals → TODO (2nd) | `[["Goals", 1], ["TODO", 2]]` | `7269069835dc2cda` |
 
 So the worked `ink:nodes` section at the top of this document, in full, is:
 
@@ -1278,7 +1278,7 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
 
 ### Step 8: Body reader and writer
 
-- [ ] Status: `in progress`
+- [x] Status: `done`
 - Depends on: 2, 7.
 - Tasks:
   - [x] `jiyuu/formats/body.py`: `read(body: str) -> tuple[Node | None, list[Problem]]` and
@@ -1335,7 +1335,7 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
         together, numbered by line in the whole file, not within the body.
   - [x] `jiyuu open map.ink` opens it; opening a `.ink` writes nothing.
   - [x] `jiyuu check map.ink` prints those problems, one per line.
-  - [ ] Hand check: open one of the user's own `.mm` maps, edit the `.ink` written beside
+  - [x] Hand check: open one of the user's own `.mm` maps, edit the `.ink` written beside
         it in a text editor (rename a node, move a branch, re-indent with tabs, break a
         line on purpose), then `jiyuu check` and `jiyuu open` the `.ink`.
 - Decided while building, not spelled out above: a line that is only a marker (`-`, as an
@@ -1343,16 +1343,16 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
   with empty text; a marker must be followed by a space to count (`-Goals` is text with no
   marker, and warned about); mixing tabs and spaces is warned about once per body, on the
   first line that brings in the second kind.
-- Done when: the tests above pass, and the hand check is done by the user. Tests: 239
-  pass, including the 17 vectors in `tests/data/bodies.json`; 100% coverage of
-  `jiyuu/formats/`.
+- Done when: the tests above pass, and the hand check is done by the user. **Met**: 239
+  tests pass, including the 17 vectors in `tests/data/bodies.json`; 100% coverage of
+  `jiyuu/formats/`. The user committed the step (`998b3d6`) and asked to continue.
 
 ### Step 9: Map file load/save and `ink:nodes`
 
-- [ ] Status: `todo`
+- [ ] Status: `in progress`
 - Depends on: 8.
 - Tasks:
-  - [ ] `jiyuu/formats/mapfile.py`:
+  - [x] `jiyuu/formats/mapfile.py`:
 
     ```python
     def load(path: Path) -> tuple[MindMap | None, list[Problem]]:
@@ -1382,32 +1382,62 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
             sections["nodes"] = nodes_text
         return ink.render(mindmap.meta, body.write(mindmap.root), sections)
     ```
-  - [ ] `jiyuu check <file.ink>`: run `load`, print every `Problem` as
+  - [x] `jiyuu check <file.ink>`: run `load`, print every `Problem` as
         `path:line: level: message`, exit non-zero if any is an error.
-  - [ ] The viewer (step 5) opens `.ink` files through `mapfile.load` (it already opens
+  - [x] The viewer (step 5) opens `.ink` files through `mapfile.load` (it already opens
         them through `formats.read_ink` since step 8, without `ink:nodes`).
-  - [ ] The `.ink` written beside an opened `.mm` (step 7) goes through `mapfile.dump`, so
+  - [x] The `.ink` written beside an opened `.mm` (step 7) goes through `mapfile.dump`, so
         it gains its `ink:nodes` section. Opening a `.ink` itself writes nothing.
   - [ ] Hand check: open one of the user's own `.mm` maps, edit the `.ink` written beside
         it in a text editor (rename a node, move a branch, fold one with `folded: "true"`),
         open the `.ink`, and see the edits in the window.
 - Tests:
-  - [ ] Round-tripping a fixture file through `load` then `dump` reproduces it byte for
+  - [x] Round-tripping a fixture file through `load` then `dump` reproduces it byte for
         byte.
-  - [ ] An `ink:nodes` entry whose key matches no current node (simulate a node renamed
+  - [x] An `ink:nodes` entry whose key matches no current node (simulate a node renamed
         since the file was last saved) is dropped by `build_nodes_section` on the next
         `dump`.
-  - [ ] The all-digit vector from `node_ids.json` (`1984891675846323`) is written quoted and
+  - [x] The all-digit vector from `node_ids.json` (`1984891675846323`) is written quoted and
         read back as the string `"1984891675846323"`, matching its node — not read back as
         an integer that matches nothing.
-  - [ ] A hand-written file with **unquoted** keys in `ink:nodes` (e.g. `7be48fc7...: ...`
+  - [x] A hand-written file with **unquoted** keys in `ink:nodes` (e.g. `7be48fc7...: ...`
         with no quotes, for a key that is not all-digit) still reads correctly, because
         `BaseLoader` reads every scalar as text regardless of quoting.
-  - [ ] A `.ink` file with prose and no `ink:meta` `kind` key opens as a map read from its
+  - [x] A `.ink` file with prose and no `ink:meta` `kind` key opens as a map read from its
         single line of text (one root, no children), with the warning from `load` above.
-  - [ ] An unknown section (anything besides `meta`/`body`/`nodes`) survives a load/dump
+  - [x] An unknown section (anything besides `meta`/`body`/`nodes`) survives a load/dump
         round trip byte for byte.
 - Done when: the tests above pass, and the viewer opens an `.ink` file written by `dump`.
+- As built, compared with the tasks above:
+  - `mapfile.read(text)` holds the code given for `load`, and `load(path)` reads the file
+    and calls it, so `formats.read_map` keeps handling files that cannot be read. `read`
+    replaces step 8's `formats.read_ink`, and `dump` replaces step 7's `formats.ink_text`;
+    both old functions are gone.
+  - Problems are numbered by line in the whole file, as step 8 already did for the body:
+    `ink.check`'s, the body's, and those of `ink:nodes`, which are counted from its fence.
+  - `read_nodes_section` returns its problems with the entries instead of `None`: YAML
+    that does not parse, a section that is not a mapping, an entry that is not a mapping
+    and a field that is not one string are each reported as a warning, and cost only those
+    entries.
+  - `kind` is checked here, as step 7 left it: a `kind` other than `mindmap` is warned
+    about (and kept), as well as the case given above (a file with no fences at all).
+  - `apply_nodes_section` reads a `side` other than `left`/`right` as undecided.
+    `build_nodes_section` tests `node in root.children` where the code above has
+    `node.parent_of(node) is root`, which `Node` has no method for.
+  - `dump` adds `kind: mindmap` too when it is missing, as "`ink:meta`" above says
+    (a map read from `.mm` has no `meta`).
+  - `formats.read_map` returns `ink.Problem`s for `.mm` files as well, with line `0`
+    (the `.mm` reader tracks no lines); the `.mm` reader's last message is an error when
+    it gave up. `formats.describe` prints them as `path:line: level: message`, or
+    `path: level: message` for line `0`; both `check` and `open` use it.
+  - `layout._resolve_sides` became public `resolve_sides`, and the `.ink` written beside
+    an opened `.mm` runs it first, so that every first-level node gets a `side` in
+    `ink:nodes` ("written for every first-level node", under "`ink:nodes`" above). This
+    also gives the hand check an entry to add `folded: "true"` to.
+  - New fixture `tests/data/ink/folded.ink`. Tests: 262 pass; 100% coverage of
+    `jiyuu/formats/`, `jiyuu/cli.py` and `jiyuu/layout.py`.
+  - The node id table under "Node paths and IDs" had wrong values for the two
+    `Goals → TODO` rows (the ids of `[["TODO", 1]]` and `[["TODO", 2]]`); corrected.
 
 ### Step 10: Edit commands and undo
 
