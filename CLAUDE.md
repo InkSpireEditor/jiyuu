@@ -26,9 +26,9 @@ file" for how a step's status and checkboxes are tracked.
   result — pass or fail, and pylint's score — before going further:
 
   ```bash
-  poetry run pytest
-  poetry run pylint --rcfile=.github/workflows/pylintrc --fail-under=9.5 jiyuu
-  poetry run ty check
+  uv run pytest
+  uv run pylint --rcfile=.github/workflows/pylintrc --fail-under=9.5 jiyuu
+  uv run ty check
   ```
   If one fails, report the failure, fix it, and re-run all three — do not tick a step's
   boxes on a partial pass.
@@ -102,11 +102,11 @@ or `ROADMAP.md`, not a note written down anywhere in the repository.
 ## Commands
 
 ```bash
-poetry install
-poetry run jiyuu ...
-poetry run pytest
-poetry run pylint --rcfile=.github/workflows/pylintrc --fail-under=9.5 jiyuu
-poetry run ty check
+uv sync
+uv run jiyuu ...
+uv run pytest
+uv run pylint --rcfile=.github/workflows/pylintrc --fail-under=9.5 jiyuu
+uv run ty check
 ```
 
 ## Layout

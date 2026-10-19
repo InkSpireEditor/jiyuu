@@ -16,25 +16,21 @@ dependencies = [
 [project.scripts]
 jiyuu = "jiyuu.cli:app"
 
-[tool.poetry]
-requires-poetry = ">=2.0"
-packages = [{ include = "jiyuu" }]
-include = [
-    { path = "jiyuu/assets/DejaVuSans.ttf" },
-    { path = "jiyuu/assets/DejaVuSans-LICENSE.txt" },
-    { path = "jiyuu/assets/themes/*.yaml" },
-    { path = "jiyuu/assets/themes/README.md" },
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-cov (>=7.1.0,<8.0.0)",
+    "pylint (>=4.0.8,<5.0.0)",
+    "ty (>=0.0.80,<0.0.81)",
 ]
-
-[tool.poetry.group.dev.dependencies]
-pytest = "*"
-pytest-cov = "^7.1.0"
-pylint = "^4.0.8"
-ty = "^0.0.80"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
 [build-system]
-requires = ["poetry-core>=2.0"]
-build-backend = "poetry.core.masonry.api"
+requires = ["uv_build>=0.12.10,<0.13"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+# The package is the `jiyuu` folder at the repository root, not under `src/`.
+module-root = ""

@@ -29,16 +29,16 @@ applies: the node opens unfolded, and its side is chosen again.
 ## Install
 
 ```bash
-poetry install
+uv sync
 ```
 
 ## Run
 
 ```bash
-poetry run jiyuu open path/to/map.mm                       # in the default theme
-poetry run jiyuu open path/to/map.ink --theme solarized-dark
-poetry run jiyuu check path/to/map.ink                     # list problems; fails on an error
-poetry run jiyuu export --mm path/to/map.ink path/to/map.mm # write a Freeplane .mm file
+uv run jiyuu open path/to/map.mm                        # in the default theme
+uv run jiyuu open path/to/map.ink --theme solarized-dark
+uv run jiyuu check path/to/map.ink                      # list problems; fails on an error
+uv run jiyuu export --mm path/to/map.ink path/to/map.mm # write a Freeplane .mm file
 ```
 
 The bundled themes are `tokyonight-night` (the default), `nord`, `nord-frost`, `nord-aurora`
@@ -82,9 +82,9 @@ the file or to keep the window's version over it.
 ## Development
 
 ```bash
-poetry run pytest
-poetry run pylint --rcfile=.github/workflows/pylintrc --fail-under=9.5 jiyuu
-poetry run ty check
+uv run pytest
+uv run pylint --rcfile=.github/workflows/pylintrc --fail-under=9.5 jiyuu
+uv run ty check
 ```
 
 ## Licence

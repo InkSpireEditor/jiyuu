@@ -58,6 +58,8 @@ Status values: `todo`, `in progress`, `done`, `blocked: <reason>`.
 | Autosave, no explicit save. Debounce 1.5 s | User's choice |
 | Freeplane default shortcuts | User's choice |
 | Build order: viewer (reading `.mm`), then `.ink`, then editor, then exports | Autosave needs `.ink` to exist before editing exists |
+| uv replaces Poetry for development, locking, building and CI (step 15) | User's choice, to try uv before moving inkspire-api to it |
+| Markdown export (step 14) dropped | User's choice: editing `.ink` files is enough |
 | jiyuu is licensed PolyForm-Noncommercial-1.0.0, copyright Maxime PUYS, same as inkspire-api | Lets step 7 copy code from inkspire-api into jiyuu with no licence conflict, since both are the same author's projects |
 | `jiyuu/cli.py` defines an empty `@app.callback()` alongside `version` | Typer collapses a `Typer()` app with exactly one registered command into that command itself, invoked with no name; the callback keeps `version` (and every command added later) addressed by name, e.g. `jiyuu version` |
 | `.github/workflows/pylintrc` disables `unexpected-keyword-arg` (E1123) and `too-many-function-args` (E1121) | Confirmed by direct test: astroid cannot infer that Flet's `@control`-decorated classes behave like dataclasses, so every Flet control call with arguments is a false positive (even `flet.Text("hi", size=16)` alone triggers both). `ty check`, run on every change alongside pylint, infers this correctly and is kept as the real check for this error class |
@@ -1726,8 +1728,9 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
   - [x] If step 1 found that Tab does not reach the page-level handler, this step uses only
         Insert for "new child", per the decision recorded in step 1. Tab was found working
         in the step 10 hand check, through the `KeyboardListener`.
-  - [ ] ~~Re-check the keybindings against a current Freeplane install.~~ **Moved to
-        "Later"**: none is installed on this machine.
+  - [ ] Re-check the keybindings against Freeplane 1.13.2, installed on this machine
+        (`/usr/bin/freeplane`). This was first moved to "Later" on the claim that no
+        Freeplane was installed; the claim was never checked, and was wrong.
 - Tests:
   - [x] `Editor.rename`: whitespace stripped, undone, same text a no-op (`tests/test_editing.py`).
   - [x] In the window (`tests/test_ui.py`): `typed_character`; F2 opens the field over
@@ -1931,12 +1934,12 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
 - Hand checklist:
   - [ ] File → Export as .mm… writes the file; a name already in use is refused; Cancel
         writes nothing; the map's keys work after the dialog closes.
-  - [ ] Freeplane opens the exported file, with the same text, folding and sides. Freeplane
-        is not installed on this machine, so this is for the user.
+  - [ ] Freeplane opens the exported file, with the same text, folding and sides
+        (`freeplane exported.mm`; Freeplane 1.13.2 is installed on this machine).
 
 ### Step 14: Markdown export
 
-- [ ] Status: `todo`
+- [ ] Status: `dropped` (user's choice: editing `.ink` files is enough; listed in "Later")
 - Depends on: 9.
 - Tasks:
   - [ ] `jiyuu/formats/markdown.py`, `write(mindmap: MindMap) -> str`: the root as
@@ -1963,6 +1966,70 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
     ```
 - Done when: the test above passes.
 
+### Step 15: Poetry replaced by uv
+
+- [ ] Status: `in progress`
+- Depends on: 13.
+- Purpose: the user wants to try uv before moving inkspire-api, which still uses Poetry,
+  to it. jiyuu is the trial.
+- Tasks:
+  - [x] `pyproject.toml`: build backend `uv_build` (`[tool.uv.build-backend] module-root =
+        ""`, since the package is `jiyuu/` at the repository root); `[tool.poetry]`
+        removed; the dev dependencies moved to a PEP 735 `[dependency-groups] dev` table,
+        with Poetry's bounds written out (`^0.0.80` is `>=0.0.80,<0.0.81`).
+  - [x] `poetry.lock` replaced by `uv.lock`. Against `poetry.lock`, only `certifi`
+        (2026.7.22 → 2026.10.18) and `platformdirs` (4.13.3 → 4.13.5) moved.
+  - [x] CI (`test.yaml`, `lint.yaml`): `astral-sh/setup-uv@v10` with Python 3.14 (its
+        cache replaces the pip cache step), `uv sync --locked`, `uv run …`.
+  - [x] Commands in `CLAUDE.md`, `README.md`, `jiyuu/cli.py` and `scripts/flet_check.py`:
+        `uv sync`, `uv run …`. Step 0 above keeps the Poetry commands it was done with.
+- Tests:
+  - [x] `uv build`: the wheel holds `DejaVuSans.ttf`, its licence, the five theme files,
+        the themes' `README.md`, and `LICENSE`.
+  - [x] The three gates, run with `uv run`, pass on the new lock.
+- Done when: the above, and CI passes on GitHub once pushed (user).
+
+### Step 16: `jiyuu <file>` and an automated install
+
+- [ ] Status: `todo`
+- Depends on: 15.
+- Decided with the user: `uv tool install`, user-level by default, with a system-wide
+  variant; no desktop entry or file-type registration.
+- Tasks:
+  - [ ] `jiyuu <file>` opens the file: the entry point inserts `open` when the first
+        argument is neither a command nor an option (`jiyuu ./check` for a file named like
+        a command).
+  - [ ] `open` resolves the file's path to an absolute one, and the window changes its
+        working directory to jiyuu's own package directory before starting Flet: on Linux,
+        Flet first runs any executable in `./build/linux` of the working directory as its
+        client, and reads `[tool.flet]` from `./pyproject.toml`.
+  - [ ] `scripts/install.sh` (no prompts, safe to run again): `uv tool install` with
+        constraints exported from `uv.lock`; `--system` (`/usr/local/bin`, sudo);
+        `--uninstall`; `--source`; downloads Flet's desktop client ahead of the first
+        launch for a user-level install.
+- Tests:
+  - [ ] The argument rewrite; an absolute document path from a relative argument.
+  - [ ] Installing into a temporary tool directory, running `version`, `check` and
+        `export` from it, and uninstalling.
+- Done when: the tests pass, and the user runs the script and opens a map with `jiyuu
+  <file>` from another directory.
+
+### Step 17: README for GitHub
+
+- [ ] Status: `todo`
+- Depends on: 16.
+- Purpose: the repository will be pushed under https://github.com/InkSpireEditor; the README
+  is written for a reader who has only the repository.
+- Tasks:
+  - [ ] Intro (viewer and editor; Linux; Python ≥ 3.12), a screenshot of
+        `worked-example.ink` (`docs/screenshot.png`), install with the script, use with
+        `jiyuu <file>`, the first-launch download of Flet's client, two key tables
+        (viewing, editing), saving and export, the `.ink` format and its origin in
+        inkspire-api (linked), limitations, development with uv, licence.
+  - [ ] Check every file that will be public (`CLAUDE.md`, `ROADMAP.md`, `scripts/`) for
+        a home path, a user map's name, or an address other than `LICENSE`'s.
+- Done when: the user has read it and approves it.
+
 ## Later (not scheduled)
 
 Search across nodes; drag-and-drop to move a node; notes, icons, colours, and links between
@@ -1973,8 +2040,10 @@ several maps open in tabs; an Android build; merging with inkspire-api (would mo
 An in-app File → Open dialog, deferred from step 5: Flet's `FilePicker` needs Zenity on
 Linux. Either a README note that Zenity must be installed, or a file browser drawn with Flet
 itself, which needs no system dependency. A user setting for the zoom direction, for
-trackpads with natural scrolling turned off (see step 5's findings). Re-checking step 11's
-keybindings against a current Freeplane install, deferred because none is installed here.
+trackpads with natural scrolling turned off (see step 5's findings).
+
+Markdown export, dropped from the plan as step 14 (user's choice: editing `.ink` files is
+enough). Its design is kept in step 14 below.
 
 ## Open questions
 

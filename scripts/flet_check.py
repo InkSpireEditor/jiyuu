@@ -7,15 +7,15 @@ to render it, and it drives most editing through keyboard shortcuts. This script
 each of those assumptions on their own, against a real Flet window, rather than leaving them
 untested until the viewer and the editor are built on top of them:
 
-    poetry run python scripts/flet_check.py auto       # window + layout + text measurement;
-                                                         # closes itself, no interaction needed
-    poetry run python scripts/flet_check.py keyboard    # keyboard events; stays open and
-                                                         # needs real key presses — close the
-                                                         # window when done, or it times out
-    poetry run python scripts/flet_check.py gestures    # pointer gestures; same, but needs a
-                                                         # trackpad or mouse used by hand
-    poetry run python scripts/flet_check.py transform   # pan/zoom without InteractiveViewer;
-                                                         # same, used by hand
+    uv run python scripts/flet_check.py auto       # window + layout + text measurement;
+                                                     # closes itself, no interaction needed
+    uv run python scripts/flet_check.py keyboard    # keyboard events; stays open and
+                                                     # needs real key presses — close the
+                                                     # window when done, or it times out
+    uv run python scripts/flet_check.py gestures    # pointer gestures; same, but needs a
+                                                     # trackpad or mouse used by hand
+    uv run python scripts/flet_check.py transform   # pan/zoom without InteractiveViewer;
+                                                     # same, used by hand
 
 `auto` prints one line of results per check to standard output. `keyboard` prints one line
 per key event as it is pressed, each noting whether a `TextField` on the same page had focus

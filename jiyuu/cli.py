@@ -1,6 +1,6 @@
 """jiyuu's command-line entry point.
 
-Running `jiyuu` with no arguments, or `poetry run jiyuu` during development, invokes the
+Running `jiyuu` with no arguments, or `uv run jiyuu` during development, invokes the
 Typer application defined here.
 """
 
