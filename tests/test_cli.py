@@ -1,6 +1,7 @@
 """Tests for jiyuu's command-line entry point."""
 
 import shutil
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -18,10 +19,12 @@ MM_FIXTURES = Path(__file__).parent / "data" / "mm"
 
 
 def test_version_command_prints_the_package_version() -> None:
-    """`jiyuu version` prints exactly `jiyuu.__version__`, with no extra output."""
+    """`jiyuu version` prints exactly `jiyuu.__version__`, with no extra output, and that is
+    the version written in `pyproject.toml`."""
     result = runner.invoke(app, ["version"])
     assert result.exit_code == 0
-    assert result.stdout.strip() == __version__
+    pyproject = tomllib.loads((Path(__file__).parent.parent / "pyproject.toml").read_text(encoding="utf-8"))
+    assert result.stdout.strip() == __version__ == pyproject["project"]["version"]
 
 
 def test_check_on_a_clean_mm_file_prints_nothing_and_exits_zero() -> None:

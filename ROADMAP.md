@@ -81,6 +81,8 @@ Status values: `todo`, `in progress`, `done`, `blocked: <reason>`.
 | Undo restores recorded values onto the same `Node` objects, not a deep copy of the tree (step 10) | The window keeps each node's shapes by `Node` object; a copied tree would make every shape again, ~0.6 s per undo on a 614-node map |
 | Among the root's children, siblings are the nodes on the same side, for moving and for the selection after a delete (step 10) | Each side is drawn as its own column; Up and Down already move only within one side |
 | The window pans and zooms by setting the map's `left`/`top`/`scale` from a `jiyuu.view.View`, not with `InteractiveViewer` | `InteractiveViewer` can only zoom around its content's top-left corner, so zooming around the pointer took two calls and jittered; found by hand in step 5 |
+| Version 1.0.0 in `pyproject.toml`, git tag `v1.0`; `jiyuu.__version__` read from the package metadata (step 18) | The user's choice of names; one place to write the number |
+| Tasks are synced with taskwarrior through its command line (`task import`, `task export`), never its database (steps 19–21) | The command line's JSON is the same in taskwarrior 2.6 and 3.x, while the database changed from text files to SQLite in 3.0; the other choices for tasks are in the table before step 19 |
 
 ## The `.ink` map file
 
@@ -2045,7 +2047,7 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
 
 ### Step 17: README for GitHub
 
-- [x] Status: `done (361f9f2)`
+- [x] Status: `done (6171ab9)`
 - Depends on: 16.
 - Purpose: the repository will be pushed under https://github.com/InkSpireEditor; the README
   is written for a reader who has only the repository.
@@ -2065,6 +2067,170 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
         `docs/`) for a home path, a user map's name, or an address other than `LICENSE`'s:
         none found (`git grep`).
 - Done when: the user has read it and approves it. **Met**: the user committed it.
+
+### Step 18: Release 1.0.0
+
+- [x] Status: `done`, apart from the `v1.0` tag, made on the user's commit of this step
+- Depends on: 17.
+- Tasks:
+  - [x] `uv version 1.0.0`: `pyproject.toml` and `uv.lock`.
+  - [x] `jiyuu.__version__` is read from the package metadata
+        (`importlib.metadata.version`), so `pyproject.toml` is the only place the number
+        is written. It was a second copy, still `0.1.0` after the bump.
+  - [ ] Annotated tag `v1.0` (`git tag -a v1.0 -m "jiyuu 1.0.0"`) on the user's commit of
+        this step. Pushing it is left to the user.
+- Tests:
+  - [x] `jiyuu version` prints the version in `pyproject.toml` (`tests/test_cli.py`); the
+        installed command prints `jiyuu.__version__` (`tests/test_install.py`).
+- Done when: the tests pass and the tag exists.
+
+### Tasks and taskwarrior (steps 19 to 21)
+
+Some nodes of a map, not all, are **tasks**: a status (pending or done), a due date and a
+priority. jiyuu copies them into taskwarrior (https://taskwarrior.org; 3.5.0 and
+taskwarrior-tui 0.27.0 are installed here), so `task` and taskwarrior-tui list them, and
+copies back what is changed there. `jiyuu task-sync <file>` does it for one map and can be
+run from cron; an open window does it as well. Tasks created in taskwarrior do not reach a
+map (an open question below).
+
+Decided with the user before step 19:
+
+| Question | Answer |
+|---|---|
+| A task edited both in the map and in taskwarrior since the last sync | The later change wins, per task |
+| Ticked done in jiyuu | `status: completed` in taskwarrior (as `task done`) |
+| Completed in taskwarrior | The node is drawn done: in a grey colour, struck through |
+| Task node deleted in jiyuu, or made a plain node | `status: deleted` in taskwarrior (as `task delete`) |
+| Task deleted in taskwarrior | The node and its branch are deleted from the map |
+| Urgent | taskwarrior's `urgency` ≥ `rc.jiyuu.urgent` from the taskrc (`task config jiyuu.urgent 8`), 10 when unset; drawn with a red border and background |
+| How a task looks in `ink:body` | A Markdown checkbox, and taskwarrior-style fields at the end of the line: `- [ ] Foo  due:2026-10-25 priority:H`, `- [x] Bar` |
+| Task metadata | In the node's `ink:nodes` entry: `kind: "task"`, the taskwarrior uuid, and the values as they were at the last sync |
+| Attributes | Status, due, priority |
+| Taskwarrior project | The map's file name without suffix: `project:example` for `docs/example.ink` |
+| Due date input | Anything `task calc` accepts (`tomorrow`, `friday`, `2026-10-25`); stored as an ISO date |
+| Window | Ctrl+T opens a task dialog; Ctrl+D ticks or unticks done; a click on the drawn checkbox does the same as Ctrl+D. The window syncs after each save and every 60 s |
+| An outside change to an open map with no unsaved changes | Reloaded without the banner |
+
+Example of a map with two tasks, Foo synced once and Bar not yet synced (the ids and the uuid
+are illustrative until step 19 computes the real ones for this text):
+
+```
+===== ink:body
+- Project
+  - Goals
+    - [ ] Foo  due:2026-10-25 priority:H
+    - [x] Bar
+    - Baz
+===== ink:nodes
+"a1f35c2e9b7d4f60": {kind: "task", uuid: "0b6c4e2a-5d1f-4c3e-9a7b-2f8e6d4c1a90",
+  synced: "2026-10-19T12:00:00Z", text: "Foo", status: "pending", due: "2026-10-25",
+  priority: "H"}
+```
+
+### Step 19: Tasks in the `.ink` format and on the canvas
+
+- [ ] Status: `todo`
+- Depends on: 18.
+- Tasks:
+  - [ ] Model (`jiyuu/model.py`): `Task(status: "pending"|"done", due: str|None,
+        priority: "H"|"M"|"L"|None)`, `Node.task: Task | None`; `TaskLink(uuid, synced,
+        text, status, due, priority)`, `Node.task_link`, holding the values as they were
+        at the last sync. The root cannot be a task: it has no id.
+  - [ ] Body (`jiyuu/formats/body.py`): `[ ] `, `[x] ` or `[X] ` after the marker makes
+        the line a task; on a task line, trailing `due:<value>` and `priority:<value>`
+        words are fields and the rest is the text. Written as `- [ ] Foo  due:2026-10-25
+        priority:H` (two spaces before the fields, `due` first, an empty field left out).
+        Escapes: a plain node whose text starts with `[ ] `, `[x] `, `[X] ` or `\` is
+        written with a leading `\`, which reading removes; on a task line, a word of the
+        text that would read as a field is written `due\:…`. An unknown priority, or a due
+        date that is not ISO, is a warning, and the word stays part of the text.
+  - [ ] `node_id` is computed from the text alone, so making a node a task keeps its id.
+  - [ ] `ink:nodes` (`jiyuu/formats/mapfile.py`): a synced task's entry is `{kind: "task",
+        uuid, synced, text, status, due, priority}`. An entry with `kind: "task"` whose id
+        matches no node is not dropped: it is attached to a task line with no entry and
+        the same text (a node moved by hand), or else kept in `MindMap.orphan_tasks`,
+        written back, and reported by `jiyuu check`; the next sync deletes its task. A node
+        renamed by hand therefore becomes a new task.
+  - [ ] `.mm` export writes the text only. Undo (`editing.py`) records `task` and
+        `task_link`.
+  - [ ] Canvas: a checkbox (☐ or ☑) drawn before a task's text and measured with it; done
+        tasks in a new theme colour `task_done`, struck through; a new theme colour pair
+        `urgent` (border and background), in every bundled theme and the themes' README,
+        used from step 21.
+- Tests: body round-trips (checkbox, fields, escapes, a text containing `due:`); the id
+  unchanged by making a node a task; a moved task re-attached and an orphaned entry kept;
+  `check`'s warnings; fixture `tests/data/ink/tasks.ink` (placeholder text); the new theme
+  keys; the done and urgent styles in the view.
+- Done when: the tests pass, and the user sees checkboxes and a struck-through done task in
+  a copy of `docs/example.ink` edited by hand.
+
+### Step 20: `jiyuu/taskwarrior.py` and `jiyuu task-sync <file>`
+
+- [ ] Status: `todo`
+- Depends on: 19.
+- Tasks:
+  - [ ] `Taskwarrior`: runs `task rc.confirmation=off rc.verbose=nothing rc.json.array=on
+        …` as a subprocess and never reads taskwarrior's database itself; honours `TASKRC`
+        and `TASKDATA`. `available()` (`task --version`, 2.6 or later), `export(uuids)`
+        (every status), `import_(tasks)` (one `task import`, which creates or updates by
+        uuid), `calc(expression)`, `get(name)` (`task _get rc.<name>`). Taskwarrior's UTC
+        dates (`20261025T000000Z`) are converted to local ISO dates and back; a local
+        midnight is stored as a date alone.
+  - [ ] `jiyuu/tasksync.py`, `sync(mindmap, project, tw, now) -> SyncReport`: a task with
+        no link gets a new uuid4 and is created; a linked task changed only in the map
+        sends the map's values, changed only in taskwarrior (`modified` later than
+        `synced`) copies description, due, priority and status into the node, changed in
+        both takes the later change (the map's time is its last save, or the file's mtime
+        for a hand edit); done ↔ `completed` (with `end`), unticked ↔ `pending`;
+        `deleted` in taskwarrior deletes the node and its branch; an orphaned entry or a
+        task node removed from the map is sent as `deleted`. `project` is the map's file
+        stem, `description` the node's text. One `task import` per sync; then every link
+        gets `synced = now`. The report counts what was created, updated, completed,
+        deleted and copied back, and gives each task's `urgency`.
+  - [ ] `jiyuu task-sync <file>`: opens the map, syncs, saves through `document.save` (so
+        a file changed meanwhile is not written over) only when something changed, prints
+        the report. Exit status 0, 1 when taskwarrior is missing or fails, 2 for an
+        unreadable file; a `.mm` file is refused.
+  - [ ] CI installs taskwarrior (`apt-get install taskwarrior`, 2.6 on Ubuntu). If its
+        import or export differs from 3.5's, the tests that run `task` are skipped in CI,
+        and that is written here.
+- Tests: `tests/test_tasksync.py` with a stand-in `Taskwarrior`: every row of the table
+  above, the later change winning in both directions, no write when nothing changed;
+  `tests/test_taskwarrior.py` against the real `task` with `TASKDATA` and `TASKRC` in
+  `tmp_path` (skipped without `task`), and a check that no test can reach `~/.task`.
+- Done when: the tests pass, and the user runs `jiyuu task-sync` on a copy of a map, sees
+  its tasks in `task project:<name> list` and taskwarrior-tui, marks one done there, and
+  sees `[x]` in the file after the next sync.
+
+### Step 21: Tasks in the window
+
+- [ ] Status: `todo`
+- Depends on: 20.
+- Tasks:
+  - [ ] `TaskDialog` (`jiyuu/ui/dialogs.py`), in the style of `FileNameDialog`: due (a
+        `task calc` expression, resolved on Save, an error shown under the field; ISO
+        dates only when taskwarrior is missing, which the dialog says), priority (none, H,
+        M, L); Save, "Not a task" (on an existing task), Cancel.
+  - [ ] Ctrl+T opens the dialog; Ctrl+D ticks or unticks done; a click on the drawn
+        checkbox does the same as Ctrl+D. All three go through new `Editor` methods
+        (`set_task`, `toggle_done`), so they can be undone.
+  - [ ] The window syncs after each save and every 60 s, in a worker thread on a copy of
+        the task values, and applies the result on the event loop thread; a result for a
+        map changed meanwhile is dropped and the sync runs again. Nodes with `urgency` ≥
+        `rc.jiyuu.urgent` (10 when unset) are drawn urgent. Without taskwarrior, a banner
+        says so once and nothing is synced.
+  - [ ] An outside change to the file while the document has no unsaved changes and no text
+        is being edited is reloaded without the banner, keeping the selection by node id
+        where it still exists.
+  - [ ] README: a Tasks section (the line syntax and its escapes, the keys, what each change
+        does in taskwarrior, `task-sync` with a cron line, `jiyuu.urgent`, a node renamed by
+        hand becoming a new task); Ctrl+T and Ctrl+D in the key table.
+- Tests (`tests/test_ui.py`, with a stand-in `Taskwarrior`): the dialog making, editing and
+  unmaking a task; Ctrl+D and its undo; a sync result applied to the window; the urgent
+  style; the silent reload, and the banner when there are unsaved changes.
+- Done when: the tests pass, and the user makes a task with Ctrl+T and sees it in `task
+  list`, marks it done in taskwarrior-tui and sees it greyed within 60 s, and sees a task
+  due today drawn red.
 
 ## Later (not scheduled)
 
@@ -2089,3 +2255,5 @@ Each is listed with the default in effect until it is answered.
 - What happens when two first-level nodes are both moved to the same side by hand in a text
   editor. Default: no special case — the layout places both in that side's column, in body
   order.
+- Should a task created in taskwarrior reach a map (for example one with the map's
+  project). Default: no; only tasks made in a map are synced.

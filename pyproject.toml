@@ -1,6 +1,6 @@
 [project]
 name = "jiyuu"
-version = "0.1.0"
+version = "1.0.0"
 description = "A FreeMind/Freeplane-compatible mindmap viewer and editor"
 license = "PolyForm-Noncommercial-1.0.0"
 license-files = ["LICENSE"]

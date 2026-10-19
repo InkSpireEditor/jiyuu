@@ -12,6 +12,8 @@ from pathlib import Path
 
 import pytest
 
+from jiyuu import __version__
+
 REPOSITORY = Path(__file__).parent.parent
 SCRIPT = REPOSITORY / "scripts" / "install.sh"
 FIXTURE = REPOSITORY / "tests" / "data" / "ink" / "worked-example.ink"
@@ -38,7 +40,7 @@ def test_install_run_and_uninstall(tmp_path: Path) -> None:
     assert jiyuu.exists()
 
     version = _run(jiyuu, "version", env=env, cwd=elsewhere)
-    assert version.returncode == 0 and version.stdout.strip() == "0.1.0"
+    assert version.returncode == 0 and version.stdout.strip() == __version__
     assert _run(jiyuu, "check", FIXTURE, env=env, cwd=elsewhere).returncode == 0
     exported = _run(jiyuu, "export", "--mm", FIXTURE, "map.mm", env=env, cwd=elsewhere)
     assert exported.returncode == 0, exported.stderr
