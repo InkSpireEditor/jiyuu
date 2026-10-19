@@ -184,6 +184,19 @@ wheels = [
 ]
 
 [[package]]
+name = "flet-desktop"
+version = "1.0.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "flet" },
+    { name = "rich" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ad/6b/aa08bbcbaeff7ffb7d941c73236a008a8ef415a51459a5d1b549a2d0daa3/flet_desktop-1.0.4.tar.gz", hash = "sha256:deae439c3fae7d166326e8d65172ddd068bb9850f59c06559b0e95eb2bf67bcf", size = 13197, upload-time = "2026-10-08T22:25:08.003Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a7/01/28595d3e508586d99c113df8b27e19d8a859be16f4de37f1fcbb73235716/flet_desktop-1.0.4-py3-none-any.whl", hash = "sha256:7fabd914b605f577b057366adf84e95087581fe85118ebcc62fb1e2e8f3f5aee", size = 13519, upload-time = "2026-10-08T22:25:07.137Z" },
+]
+
+[[package]]
 name = "h11"
 version = "0.16.0"
 source = { registry = "https://pypi.org/simple" }
@@ -284,6 +297,7 @@ source = { editable = "." }
 dependencies = [
     { name = "defusedxml" },
     { name = "flet" },
+    { name = "flet-desktop" },
     { name = "pillow" },
     { name = "pyyaml" },
     { name = "typer" },
@@ -301,6 +315,7 @@ dev = [
 requires-dist = [
     { name = "defusedxml", specifier = ">=0.7.1,<0.8.0" },
     { name = "flet", specifier = ">=1.0.4,<2.0.0" },
+    { name = "flet-desktop", specifier = ">=1.0.4,<2.0.0" },
     { name = "pillow" },
     { name = "pyyaml", specifier = ">=6.0.3,<7.0.0" },
     { name = "typer" },

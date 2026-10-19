@@ -55,8 +55,10 @@ Shift held. Every character after the first is typed into the field itself.
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import cast
 
 import flet as ft
@@ -520,7 +522,15 @@ def _modifier(key: str) -> str | None:
 
 
 def run(doc: Document, theme: Theme) -> None:
-    """Opens a window showing `doc`'s map in `theme`; returns when it closes."""
+    """Opens a window showing `doc`'s map in `theme`; returns when it closes.
+
+    The window is started from this package's own directory, and the working directory is
+    put back once it closes. On Linux, Flet's desktop client is looked for first among the
+    executables in `./build/linux` of the working directory, then at `FLET_VIEW_PATH`, then
+    in Flet's own download cache (`~/.flet/client`); and Flet reads `[tool.flet]` from a
+    `./pyproject.toml` there. Run from inside another project, `jiyuu` could otherwise start
+    that project's program as its window. `doc`'s paths must therefore be absolute.
+    """
 
     def main(page: ft.Page) -> None:
         page.title = window_title(doc)
@@ -531,4 +541,5 @@ def run(doc: Document, theme: Theme) -> None:
         window.redraw()
         page.add(window.control())
 
-    ft.run(main)
+    with contextlib.chdir(Path(__file__).parent):
+        ft.run(main)

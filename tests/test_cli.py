@@ -7,7 +7,7 @@ import pytest
 from typer.testing import CliRunner
 
 from jiyuu import __version__
-from jiyuu.cli import app
+from jiyuu.cli import app, command_names, entry, option_names, with_default_command
 from jiyuu.formats import ink, mm
 from jiyuu.document import Document
 from jiyuu.theme import DEFAULT_THEME, Theme, load_theme
@@ -285,3 +285,96 @@ def test_export_needs_a_format_and_a_readable_source(tmp_path: Path) -> None:
     assert runner.invoke(app, ["export", str(source), str(tmp_path / "out.mm")]).exit_code != 0
     assert runner.invoke(app, ["export", "--mm", str(tmp_path / "missing.ink"), str(tmp_path / "out.mm")]).exit_code != 0
     assert sorted(p.name for p in tmp_path.iterdir()) == ["map.ink"]
+
+
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [
+        (["map.ink"], ["open", "map.ink"]),
+        (["map.ink", "--theme", "nord"], ["open", "map.ink", "--theme", "nord"]),
+        (["./check"], ["open", "./check"]),
+        (["check", "map.ink"], ["check", "map.ink"]),
+        (["open", "map.ink"], ["open", "map.ink"]),
+        (["--help"], ["--help"]),
+        ([], None),
+        (["chek"], None),  # neither a command nor a file
+        (["missing.ink"], None),
+        (["--foo"], None),
+    ],
+)
+def test_with_default_command(
+    args: list[str], expected: list[str] | None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """In a folder holding `map.ink` and a file named `check`: an existing file is opened,
+    a command or `jiyuu`'s own option is passed on, and anything else gives `None`."""
+    (tmp_path / "map.ink").write_text("- Project\n", encoding="utf-8")
+    (tmp_path / "check").write_text("- Project\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    assert with_default_command(args, command_names(), option_names()) == expected
+
+
+def test_command_and_option_names() -> None:
+    assert command_names() == {"version", "check", "export", "open"}
+    assert "--help" in option_names()
+
+
+def _entry(argv: list[str], calls: list[tuple[list[str], str]], monkeypatch: pytest.MonkeyPatch) -> None:
+    """Runs `entry` with `argv` after the program's name, with `app` adding each call to
+    `calls` instead of running."""
+    commands, options = command_names(), option_names()
+    monkeypatch.setattr("sys.argv", ["jiyuu", *argv])
+    monkeypatch.setattr("jiyuu.cli.command_names", lambda: commands)
+    monkeypatch.setattr("jiyuu.cli.option_names", lambda: options)
+    monkeypatch.setattr("jiyuu.cli.app", lambda args, prog_name, **_: calls.append((args, prog_name)))
+    entry()
+
+
+def test_entry_opens_an_existing_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    (tmp_path / "map.ink").write_text("- Project\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    calls: list[tuple[list[str], str]] = []
+    _entry(["map.ink"], calls, monkeypatch)
+    assert calls == [(["open", "map.ink"], "jiyuu")]
+
+
+@pytest.mark.parametrize(("argv", "status"), [([], 0), (["chek"], 2), (["--foo"], 2)])
+def test_entry_shows_the_help_for_no_or_an_unknown_first_argument(
+    argv: list[str], status: int, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The help is asked for; an unknown argument is named on standard error first; the
+    exit status is 0 without arguments and 2 otherwise."""
+    calls: list[tuple[list[str], str]] = []
+    with pytest.raises(SystemExit) as stopped:
+        _entry(argv, calls, monkeypatch)
+    assert stopped.value.code == status
+    assert calls == [(["--help"], "jiyuu")]
+    error = capsys.readouterr().err
+    assert (argv[0] in error) if argv else error == ""
+
+
+def test_the_help_shown_is_the_full_one(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    """With the real `app`, an unknown command prints every command and the
+    `jiyuu <file>` shorthand."""
+    monkeypatch.setattr("sys.argv", ["jiyuu", "chek"])
+    with pytest.raises(SystemExit):
+        entry()
+    output = capsys.readouterr()
+    assert "'chek' is not a command" in output.err
+    for name in ("open", "check", "export", "version", "jiyuu open <file>"):
+        assert name in output.out
+
+
+def test_open_with_a_relative_path_saves_to_an_absolute_one(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The window changes the working directory, so the document's file must not depend
+    on it."""
+    docs: list[Document] = []
+    monkeypatch.setattr("jiyuu.ui.app.run", lambda doc, theme: docs.append(doc))
+    (tmp_path / "map.ink").write_text("- Project\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["open", "map.ink"])
+
+    assert result.exit_code == 0
+    assert [doc.path for doc in docs] == [tmp_path / "map.ink"]
+    assert docs[0].path is not None and docs[0].path.is_absolute()

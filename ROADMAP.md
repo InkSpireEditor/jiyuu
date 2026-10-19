@@ -59,6 +59,8 @@ Status values: `todo`, `in progress`, `done`, `blocked: <reason>`.
 | Freeplane default shortcuts | User's choice |
 | Build order: viewer (reading `.mm`), then `.ink`, then editor, then exports | Autosave needs `.ink` to exist before editing exists |
 | uv replaces Poetry for development, locking, building and CI (step 15) | User's choice, to try uv before moving inkspire-api to it |
+| jiyuu is installed with `uv tool install` through `scripts/install.sh`, user-level by default, `--system` for `/usr/local/bin`; no desktop entry (step 16) | User's choice among uv tool, pipx, an Arch package and `flet build` |
+| `jiyuu <file>` is `jiyuu open <file>` (step 16) | User's request: open a map by typing `jiyuu <file>` |
 | Markdown export (step 14) dropped | User's choice: editing `.ink` files is enough |
 | jiyuu is licensed PolyForm-Noncommercial-1.0.0, copyright Maxime PUYS, same as inkspire-api | Lets step 7 copy code from inkspire-api into jiyuu with no licence conflict, since both are the same author's projects |
 | `jiyuu/cli.py` defines an empty `@app.callback()` alongside `version` | Typer collapses a `Typer()` app with exactly one registered command into that command itself, invoked with no name; the callback keeps `version` (and every command added later) addressed by name, e.g. `jiyuu version` |
@@ -1968,7 +1970,7 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
 
 ### Step 15: Poetry replaced by uv
 
-- [ ] Status: `in progress`
+- [x] Status: `done (63f860d)`, apart from CI on GitHub, which runs once the repository is pushed
 - Depends on: 13.
 - Purpose: the user wants to try uv before moving inkspire-api, which still uses Poetry,
   to it. jiyuu is the trial.
@@ -1991,26 +1993,53 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
 
 ### Step 16: `jiyuu <file>` and an automated install
 
-- [ ] Status: `todo`
+- [ ] Status: `in progress`
 - Depends on: 15.
 - Decided with the user: `uv tool install`, user-level by default, with a system-wide
   variant; no desktop entry or file-type registration.
 - Tasks:
-  - [ ] `jiyuu <file>` opens the file: the entry point inserts `open` when the first
+  - [x] `jiyuu <file>` opens the file: the entry point inserts `open` when the first
         argument is neither a command nor an option (`jiyuu ./check` for a file named like
-        a command).
-  - [ ] `open` resolves the file's path to an absolute one, and the window changes its
+        a command). As built: `cli.entry`, the `jiyuu` script in `pyproject.toml`;
+        `cli.with_default_command`; the command names come from Typer's own group
+        (`typer.main.get_command`), so a new command is known without a list to update.
+        Asked by the user after trying it: `jiyuu` alone, or with a first argument that is
+        neither a command, an option of `jiyuu` itself, nor an existing file, prints the
+        full help (exit status 0 alone, 2 otherwise, after a line naming the argument), so
+        `jiyuu <file>` now opens only a file that exists. The top-level help got its own
+        text (it showed the callback's docstring, written for code readers), and Typer's
+        Markdown mode, which joins a docstring paragraph's lines in the help.
+  - [x] `open` resolves the file's path to an absolute one, and the window changes its
         working directory to jiyuu's own package directory before starting Flet: on Linux,
         Flet first runs any executable in `./build/linux` of the working directory as its
-        client, and reads `[tool.flet]` from `./pyproject.toml`.
-  - [ ] `scripts/install.sh` (no prompts, safe to run again): `uv tool install` with
+        client, and reads `[tool.flet]` from `./pyproject.toml`. As built: `ui.app.run`
+        uses `contextlib.chdir`, so the directory is put back when the window closes.
+        Checked with the installed command, run from a folder with a decoy
+        `build/linux` program that writes a marker file: the marker never appeared.
+  - [x] `scripts/install.sh` (no prompts, safe to run again): `uv tool install` with
         constraints exported from `uv.lock`; `--system` (`/usr/local/bin`, sudo);
         `--uninstall`; `--source`; downloads Flet's desktop client ahead of the first
-        launch for a user-level install.
+        launch for a user-level install. As built: `--force --reinstall-package jiyuu`,
+        so running it again rebuilds jiyuu from the source while its dependencies come
+        from uv's cache; `--no-client` skips the download; `UV_TOOL_DIR` and
+        `UV_TOOL_BIN_DIR` set beforehand are honoured. The installed versions were
+        checked against `uv.lock`.
+  - [x] `flet-desktop` added to the dependencies. Found with the first installed command:
+        `flet` does not depend on it, and installs it into the running environment at the
+        first window ("Installing flet-desktop 1.0.4 package"). That would fail in a
+        system-wide install, which users cannot write to, and the script's client download
+        imports it. The development environment had it only from such a runtime install;
+        it is now in `uv.lock`.
 - Tests:
-  - [ ] The argument rewrite; an absolute document path from a relative argument.
-  - [ ] Installing into a temporary tool directory, running `version`, `check` and
-        `export` from it, and uninstalling.
+  - [x] The argument rewrite (a file, a file and options, `./check`, a command, an option,
+        nothing, a typo, a missing file, an unknown option); the command and option names;
+        `entry` opening a file, and showing the help with the right exit status; the full
+        help's content; an absolute document path from a relative argument
+        (`tests/test_cli.py`).
+  - [x] Installing into a temporary tool directory, running `version`, `check`, `export`
+        and `jiyuu <missing file>` from another folder, uninstalling, and uninstalling
+        again (`tests/test_install.py`, skipped without `uv` or `bash`; 0.9 s with uv's
+        cache filled). `bash -n` on the script; `shellcheck` is not installed here.
 - Done when: the tests pass, and the user runs the script and opens a map with `jiyuu
   <file>` from another directory.
 

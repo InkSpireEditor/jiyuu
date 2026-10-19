@@ -28,18 +28,31 @@ applies: the node opens unfolded, and its side is chosen again.
 
 ## Install
 
+jiyuu runs on Linux, and needs [uv](https://docs.astral.sh/uv/). From a clone of this
+repository:
+
 ```bash
-uv sync
+scripts/install.sh              # for the current user, in ~/.local/bin
+scripts/install.sh --system     # for every user, in /usr/local/bin (uses sudo)
+scripts/install.sh --uninstall  # remove it again
 ```
+
+Running the script again updates jiyuu from the clone. Its window is drawn by Flet's desktop
+client, which is downloaded into `~/.flet/client` once per user: by the script for a user
+install, at the first launch otherwise.
 
 ## Run
 
 ```bash
-uv run jiyuu open path/to/map.mm                        # in the default theme
-uv run jiyuu open path/to/map.ink --theme solarized-dark
-uv run jiyuu check path/to/map.ink                      # list problems; fails on an error
-uv run jiyuu export --mm path/to/map.ink path/to/map.mm # write a Freeplane .mm file
+jiyuu path/to/map.mm                                 # same as `jiyuu open path/to/map.mm`
+jiyuu path/to/map.ink --theme solarized-dark
+jiyuu check path/to/map.ink                          # list problems; fails on an error
+jiyuu export --mm path/to/map.ink path/to/map.mm     # write a Freeplane .mm file
 ```
+
+A file whose name is also a command's, such as `check`, is opened with `jiyuu ./check`.
+`jiyuu` alone, or with a first argument that is neither a command nor an existing file,
+prints the help.
 
 The bundled themes are `tokyonight-night` (the default), `nord`, `nord-frost`, `nord-aurora`
 and `solarized-dark`; `--theme` also takes a path to a theme file of your own, in the format
@@ -82,6 +95,8 @@ the file or to keep the window's version over it.
 ## Development
 
 ```bash
+uv sync
+uv run jiyuu path/to/map.ink
 uv run pytest
 uv run pylint --rcfile=.github/workflows/pylintrc --fail-under=9.5 jiyuu
 uv run ty check
