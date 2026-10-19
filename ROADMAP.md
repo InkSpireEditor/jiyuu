@@ -1993,7 +1993,7 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
 
 ### Step 16: `jiyuu <file>` and an automated install
 
-- [ ] Status: `in progress`
+- [x] Status: `done (aab6eeb)`
 - Depends on: 15.
 - Decided with the user: `uv tool install`, user-level by default, with a system-wide
   variant; no desktop entry or file-type registration.
@@ -2045,19 +2045,26 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
 
 ### Step 17: README for GitHub
 
-- [ ] Status: `todo`
+- [x] Status: `done (361f9f2)`
 - Depends on: 16.
 - Purpose: the repository will be pushed under https://github.com/InkSpireEditor; the README
   is written for a reader who has only the repository.
 - Tasks:
-  - [ ] Intro (viewer and editor; Linux; Python ≥ 3.12), a screenshot of
-        `worked-example.ink` (`docs/screenshot.png`), install with the script, use with
-        `jiyuu <file>`, the first-launch download of Flet's client, two key tables
-        (viewing, editing), saving and export, the `.ink` format and its origin in
-        inkspire-api (linked), limitations, development with uv, licence.
-  - [ ] Check every file that will be public (`CLAUDE.md`, `ROADMAP.md`, `scripts/`) for
-        a home path, a user map's name, or an address other than `LICENSE`'s.
-- Done when: the user has read it and approves it.
+  - [x] Intro (viewer and editor; Linux; Python ≥ 3.12), install with the script (and the
+        `uv tool install git+https://github.com/InkSpireEditor/jiyuu` line, the URL given
+        by the user), use with `jiyuu <file>`, the first-launch download of Flet's client,
+        two key tables (moving around, editing), saving and export, the `.ink` format and
+        its origin in inkspire-api (linked), limitations, development with uv, licence.
+        The `.ink` example was checked to read and write back byte for byte.
+  - [x] Screenshot `docs/screenshot.png`, taken by the user, of `docs/example.ink`: a map
+        about jiyuu itself, written for the screenshot (the user's suggestion, instead of
+        the test fixture first planned), with a folded branch, both sides and three
+        depths. A first capture from a probe window also caught a key the user pressed
+        elsewhere: the window takes the keyboard when it opens.
+  - [x] Check every file that will be public (`CLAUDE.md`, `ROADMAP.md`, `scripts/`,
+        `docs/`) for a home path, a user map's name, or an address other than `LICENSE`'s:
+        none found (`git grep`).
+- Done when: the user has read it and approves it. **Met**: the user committed it.
 
 ## Later (not scheduled)
 
