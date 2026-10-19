@@ -2070,14 +2070,14 @@ risks, and the condition that marks it done. Tasks and tests are tracked with ch
 
 ### Step 18: Release 1.0.0
 
-- [x] Status: `done`, apart from the `v1.0` tag, made on the user's commit of this step
+- [x] Status: `done (d525626, tagged v1.0)`
 - Depends on: 17.
 - Tasks:
   - [x] `uv version 1.0.0`: `pyproject.toml` and `uv.lock`.
   - [x] `jiyuu.__version__` is read from the package metadata
         (`importlib.metadata.version`), so `pyproject.toml` is the only place the number
         is written. It was a second copy, still `0.1.0` after the bump.
-  - [ ] Annotated tag `v1.0` (`git tag -a v1.0 -m "jiyuu 1.0.0"`) on the user's commit of
+  - [x] Annotated tag `v1.0` (`git tag -a v1.0 -m "jiyuu 1.0.0"`) on the user's commit of
         this step. Pushing it is left to the user.
 - Tests:
   - [x] `jiyuu version` prints the version in `pyproject.toml` (`tests/test_cli.py`); the
@@ -2102,7 +2102,7 @@ Decided with the user before step 19:
 | Completed in taskwarrior | The node is drawn done: in a grey colour, struck through |
 | Task node deleted in jiyuu, or made a plain node | `status: deleted` in taskwarrior (as `task delete`) |
 | Task deleted in taskwarrior | The node and its branch are deleted from the map |
-| Urgent | taskwarrior's `urgency` ≥ `rc.jiyuu.urgent` from the taskrc (`task config jiyuu.urgent 8`), 10 when unset; drawn with a red border and background |
+| Urgent | taskwarrior's `urgency` ≥ `rc.jiyuu.urgent` from the taskrc (`task config jiyuu.urgent 8`), 9 when unset (first 10; changed after the measurements below); drawn with a red border and background |
 | How a task looks in `ink:body` | A Markdown checkbox, and taskwarrior-style fields at the end of the line: `- [ ] Foo  due:2026-10-25 priority:H`, `- [x] Bar` |
 | Task metadata | In the node's `ink:nodes` entry: `kind: "task"`, the taskwarrior uuid, and the values as they were at the last sync |
 | Attributes | Status, due, priority |
@@ -2110,6 +2110,46 @@ Decided with the user before step 19:
 | Due date input | Anything `task calc` accepts (`tomorrow`, `friday`, `2026-10-25`); stored as an ISO date |
 | Window | Ctrl+T opens a task dialog; Ctrl+D ticks or unticks done; a click on the drawn checkbox does the same as Ctrl+D. The window syncs after each save and every 60 s |
 | An outside change to an open map with no unsaved changes | Reloaded without the banner |
+| The map's path in taskwarrior | Each task gets an attribute `jiyuumap` holding the map's absolute path, so `task jiyuumap:/path/to/map.ink list` finds a map's tasks even when two maps share a file name; a moved map updates it at the next sync |
+
+#### Taskwarrior's behaviour, measured before step 19
+
+Measured with taskwarrior 3.5.0 on 2026-10-19, in a temporary `TASKRC` and `TASKDATA` (never
+`~/.task`), with the command `task rc.confirmation=off rc.verbose=nothing rc.json.array=on`:
+
+- `task import` replaces the whole task: an attribute missing from the imported JSON is
+  removed. A tag and an annotation added with `task modify` and `task annotate` were gone
+  after importing the task without them. So a sync exports each linked task first, and
+  imports taskwarrior's own JSON with only `description`, `status`, `due`, `priority`,
+  `project` and `jiyuumap` changed (a field left empty in the map is removed from the JSON).
+- Importing a task identical to the stored one prints `skip` and leaves `modified`
+  unchanged; any difference prints `mod` and sets `modified` to the time of the import. So
+  a link's `synced` is taskwarrior's `modified` read back after the import, not jiyuu's own
+  clock; otherwise every import would look like a later change made in taskwarrior.
+  `modified` has a resolution of one second.
+- Importing `status: completed` with no `end` sets `end` to the time of the import;
+  importing `status: pending` for a completed task removes `end`; `status: deleted` sets
+  `end`. jiyuu never writes `end`.
+- An attribute taskwarrior does not know (`jiyuumap`) is kept, including after a later
+  `task modify`. `task list` does not show it unless it is declared as a UDA in the taskrc.
+- `task <uuid> <uuid> … export` returns tasks of every status, in its own order, and leaves
+  out an unknown uuid without an error. The filter goes before `export`; a uuid after it is
+  read as a report name, and an 8-character short uuid is not accepted there either.
+- Dates are UTC, `20261024T220000Z` for 2026-10-25 at local midnight (UTC+2 that day).
+  `task import` also accepts `2026-10-25` and `tomorrow` as a due date; jiyuu sends the
+  UTC form anyway.
+- `task calc` prints local time with no zone: `tomorrow` → `2026-10-20T00:00:00`, `friday`
+  → `2026-10-23T00:00:00`, `eow` → `2026-10-25T23:59:59`. An expression it does not
+  understand is printed back unchanged with exit status 0, so jiyuu checks that the output
+  is an ISO date and time. A due date with a time is stored to the minute
+  (`2026-10-25T23:59`).
+- `task _get rc.jiyuu.urgent`, unset, prints an empty line with exit status 0.
+- `task import` of invalid JSON exits with status 2 and an error on stderr.
+- Urgency with the default coefficients: overdue by a day 9.70, due today 9.24, due
+  tomorrow 8.79, due at the end of the week 6.02, due in 4 weeks 2.40; priority H alone
+  6.0, M alone 3.9; H and due in 6 days 13.46; H and due today 15.24; tag `+next` 15.8.
+  With 10 as the threshold, a task due today with no priority was not urgent, so the
+  default became 9 (the user's choice).
 
 Example of a map with two tasks, Foo synced once and Bar not yet synced (the ids and the uuid
 are illustrative until step 19 computes the real ones for this text):
@@ -2152,7 +2192,9 @@ are illustrative until step 19 computes the real ones for this text):
         written back, and reported by `jiyuu check`; the next sync deletes its task. A node
         renamed by hand therefore becomes a new task.
   - [ ] `.mm` export writes the text only. Undo (`editing.py`) records `task` and
-        `task_link`.
+        `task_link`. `Editor.delete` moves the links of every task in the deleted branch to
+        `MindMap.orphan_tasks` (undo moves them back), so the next sync deletes their tasks;
+        without that, the links would disappear with the nodes at the next save.
   - [ ] Canvas: a checkbox (☐ or ☑) drawn before a task's text and measured with it; done
         tasks in a new theme colour `task_done`, struck through; a new theme colour pair
         `urgent` (border and background), in every bundled theme and the themes' README,
@@ -2175,7 +2217,9 @@ are illustrative until step 19 computes the real ones for this text):
         (every status), `import_(tasks)` (one `task import`, which creates or updates by
         uuid), `calc(expression)`, `get(name)` (`task _get rc.<name>`). Taskwarrior's UTC
         dates (`20261025T000000Z`) are converted to local ISO dates and back; a local
-        midnight is stored as a date alone.
+        midnight is stored as a date alone, another time to the minute. `calc` raises on
+        output that is not an ISO date and time. See "Taskwarrior's behaviour, measured
+        before step 19" above.
   - [ ] `jiyuu/tasksync.py`, `sync(mindmap, project, tw, now) -> SyncReport`: a task with
         no link gets a new uuid4 and is created; a linked task changed only in the map
         sends the map's values, changed only in taskwarrior (`modified` later than
@@ -2184,8 +2228,10 @@ are illustrative until step 19 computes the real ones for this text):
         for a hand edit); done ↔ `completed` (with `end`), unticked ↔ `pending`;
         `deleted` in taskwarrior deletes the node and its branch; an orphaned entry or a
         task node removed from the map is sent as `deleted`. `project` is the map's file
-        stem, `description` the node's text. One `task import` per sync; then every link
-        gets `synced = now`. The report counts what was created, updated, completed,
+        stem, `jiyuumap` its absolute path, `description` the node's text. One `task
+        export` of every linked uuid, then one `task import` of taskwarrior's JSON with
+        jiyuu's fields changed (nothing else is removed), then one more export: every link
+        gets `synced` = that task's `modified`. The report counts what was created, updated, completed,
         deleted and copied back, and gives each task's `urgency`.
   - [ ] `jiyuu task-sync <file>`: opens the map, syncs, saves through `document.save` (so
         a file changed meanwhile is not written over) only when something changed, prints
@@ -2217,7 +2263,7 @@ are illustrative until step 19 computes the real ones for this text):
   - [ ] The window syncs after each save and every 60 s, in a worker thread on a copy of
         the task values, and applies the result on the event loop thread; a result for a
         map changed meanwhile is dropped and the sync runs again. Nodes with `urgency` ≥
-        `rc.jiyuu.urgent` (10 when unset) are drawn urgent. Without taskwarrior, a banner
+        `rc.jiyuu.urgent` (9 when unset) are drawn urgent. Without taskwarrior, a banner
         says so once and nothing is synced.
   - [ ] An outside change to the file while the document has no unsaved changes and no text
         is being edited is reloaded without the banner, keeping the selection by node id
