@@ -2272,7 +2272,7 @@ text; the uuid and `synced` are made up):
 
 ### Step 21: Taskwarrior
 
-- [x] Status: `done`, apart from CI with taskwarrior 2.6 on Ubuntu, which runs once pushed
+- [x] Status: `done (6971797)`, apart from CI with taskwarrior 2.6 on Ubuntu, which runs once pushed
 - Depends on: 20.
 - Tasks:
   - [x] `jiyuu/taskwarrior.py`, `Taskwarrior`: runs `task rc.confirmation=off
@@ -2358,6 +2358,37 @@ text; the uuid and `synced` are made up):
   changes to existing tasks in the window reach taskwarrior after the save; a task made in
   the window reaches it without `task-sync`; a task done in taskwarrior reaches the open
   window at the next sync; a task added in taskwarrior reaches no map, as intended.
+
+### Step 22: Saving keeps the file's permissions, owner and links
+
+- [x] Status: `done`
+- Depends on: 21.
+- Found after step 21: every save left the map with permissions `0600`, whatever they
+  were. `write_text_atomically` wrote to a file made by `tempfile.mkstemp`, which always
+  has `0600`, and that file replaced the map, also taking away the map's group, its
+  extended attributes (ACLs included), a symbolic link to it, and its hard links. Asked by
+  the user: "Destroying ownership is not good."
+- Tasks (`jiyuu/formats/__init__.py`, `write_text_atomically`):
+  - [x] An existing file's permission bits, owner and group (changed only if they differ,
+        so that a folder with the set-group-id bit keeps working), and extended attributes
+        are given to the temporary file before it replaces the file; an attribute that
+        needs privileges to set is left out.
+  - [x] A file whose owner or group a new file could not get (owned by someone else, or a
+        group the user is not in), and a file with more than one hard link, is written in
+        place instead, keeping the file itself. That gives up the one-step replace for
+        those files only: a write that fails partway can leave them half-written.
+  - [x] A symbolic link is followed: the file it points to is written, and the link stays.
+  - [x] A new file gets `0o666` without the umask's bits, as `open` would give it.
+  - [x] The temporary file, and a file written in place, is flushed to disk (`fsync`)
+        before it replaces the file, so that a power cut cannot leave an empty file.
+- Tests (`tests/test_formats.py`): a new file under umask `027` is `0640`; `0644`,
+  `0664`, `0600` and `0755` kept; a second group of the user's kept (skipped for a user in
+  one group); a `user.` extended attribute kept (skipped where the file system holds none);
+  a symbolic link kept with its target written; a file with a second hard link and one
+  whose owner cannot be kept written in place (same inode); `_can_keep_owner` for another
+  user's file.
+- Done when: the tests pass. A file saved before this step keeps the `0600` it was given;
+  `chmod` puts it back.
 
 ## Later (not scheduled)
 
