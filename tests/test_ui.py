@@ -16,7 +16,7 @@ from jiyuu.layout import CHECKBOX, CHECKBOX_DONE, LayoutSettings, Plane, layout
 from jiyuu.measure import FixedMeasurer
 from jiyuu.model import MindMap, Node, Task
 from jiyuu.theme import load_theme
-from jiyuu.ui.dialogs import FileNameDialog
+from jiyuu.ui.dialogs import FileNameDialog, TaskDialog
 from jiyuu.ui.export import ask_export
 from jiyuu.ui.app import MIN_FIELD_WIDTH, MapLayer, MapWindow, TextEdit, typed_character
 from jiyuu.ui.canvas import MapDrawing, marker_centre
@@ -1009,3 +1009,106 @@ def test_cancelling_an_export_writes_nothing(tmp_path: Path) -> None:
     _click_button(dialog.dialog, "Cancel")
     assert page.dialogs == []
     assert sorted(p.name for p in tmp_path.iterdir()) == ["map.ink"]
+
+
+def _task_dialog(window: MapWindow, node: Node) -> TaskDialog:
+    dialog = window.ask_task(node)
+    assert dialog is not None
+    return dialog
+
+
+def test_ctrl_t_opens_the_task_dialog_on_the_selected_node_but_not_on_the_root() -> None:
+    root, goals, _ = _tree()
+    window, page = _window(root)
+    _press_with(window, ["Control Left"], "T")
+    assert page.dialogs == []
+    window.select(goals)
+    _press_with(window, ["Control Left"], "T")
+    assert len(page.dialogs) == 1
+    assert cast(ft.Text, cast(ft.AlertDialog, page.dialogs[0]).title).value == "Make a task"
+
+
+def test_saving_the_task_dialog_makes_the_node_a_task_and_can_be_undone() -> None:
+    """Due date and priority typed, Save: the node is a task, selected, drawn with its
+    label, the dialog closed and the keyboard given back with Ctrl no longer held."""
+    root, goals, _ = _tree()
+    io = goals.children[0]
+    window, page = _window(root)
+    _press(window, "Control Left")
+    dialog = _task_dialog(window, io)
+    dialog.due.value = "2026-10-25"
+    dialog.priority.value = "H"
+    _click_button(dialog.dialog, "Save")
+
+    assert io.task == Task(due="2026-10-25", priority="H")
+    assert window.selected is io and page.dialogs == []
+    assert f"{CHECKBOX} I/O · 2026-10-25 · H" in [text.value for _, _, text in _boxes(window.drawing)]
+    assert not window.ctrl_held
+    assert page.tasks[-1].handler == cast(ft.KeyboardListener, window.keyboard).focus
+    window.undo()
+    assert io.task is None
+
+
+def test_the_task_dialog_refuses_a_due_date_that_is_not_a_date() -> None:
+    root, goals, _ = _tree()
+    io = goals.children[0]
+    window, page = _window(root)
+    dialog = _task_dialog(window, io)
+    dialog.due.value = "tomorrow"
+    _click_button(dialog.dialog, "Save")
+    assert io.task is None and len(page.dialogs) == 1 and dialog.due.error
+    assert page.updates[-1] == (dialog.due,)
+
+
+def test_the_task_dialog_edits_a_task_keeping_it_done_and_not_a_task_unmakes_it() -> None:
+    root, goals, _ = _tree()
+    io = goals.children[0]
+    io.task = Task(done=True, due="2026-10-25", priority="M")
+    window, page = _window(root)
+    dialog = _task_dialog(window, io)
+    assert (dialog.due.value, dialog.priority.value) == ("2026-10-25", "M")
+    dialog.due.value, dialog.priority.value = "", "none"
+    _click_button(dialog.dialog, "Save")
+    assert io.task == Task(done=True)
+
+    _click_button(_task_dialog(window, io).dialog, "Not a task")
+    assert io.task is None and page.dialogs == []
+
+
+def test_cancel_and_a_dialog_for_a_plain_node_offer_no_not_a_task() -> None:
+    root, goals, _ = _tree()
+    io = goals.children[0]
+    window, page = _window(root)
+    dialog = _task_dialog(window, io)
+    labels = [cast(ft.Text, cast(ft.TextButton, b).content).value for b in dialog.dialog.actions]
+    assert labels == ["Save", "Cancel"]
+    _click_button(dialog.dialog, "Cancel")
+    assert io.task is None and page.dialogs == [] and window.editor.version == 0
+
+
+def test_ctrl_d_and_a_click_on_the_checkbox_tick_a_task_and_can_be_undone() -> None:
+    root, goals, _ = _tree()
+    io = goals.children[0]
+    io.task = Task()
+    window, _ = _window(root)
+    window.select(io)
+    _press_with(window, ["Control Left"], "D")
+    assert io.task == Task(done=True)
+    _press_with(window, ["Control Left"], "Z")
+    assert io.task == Task()
+
+    window.select(goals)
+    rect = window.rects[io]
+    _click(window, (rect.x + window.settings.pad_x + 2, rect.y + rect.height / 2))
+    assert io.task == Task(done=True) and window.selected is io
+    _click(window, (rect.x + rect.width - 2, rect.y + rect.height / 2))  # on the text
+    assert io.task == Task(done=True)
+
+
+def test_ctrl_d_on_a_plain_node_does_nothing() -> None:
+    root, goals, _ = _tree()
+    window, page = _window(root)
+    window.select(goals)
+    updates = len(page.updates)
+    _press_with(window, ["Control Left"], "D")
+    assert goals.task is None and len(page.updates) == updates

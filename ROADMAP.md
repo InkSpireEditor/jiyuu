@@ -2168,7 +2168,7 @@ text; the uuid and `synced` are made up):
 
 ### Step 19: Tasks in the `.ink` format and on the canvas
 
-- [x] Status: `done`
+- [x] Status: `done (4b87fa2)`
 - Depends on: 18.
 - Tasks:
   - [x] Model (`jiyuu/model.py`): `Task`, `Node.task`, `TaskLink`, `Node.task_link`,
@@ -2230,27 +2230,40 @@ text; the uuid and `synced` are made up):
 
 ### Step 20: Tasks in the window
 
-- [ ] Status: `todo`
+- [x] Status: `done`
 - Depends on: 19.
 - Swapped with the taskwarrior step at the user's request, after step 19: with only step 19
   built, a task could be made only by editing the file by hand. This step needs nothing
   from taskwarrior.
 - Tasks:
-  - [ ] `TaskDialog` (`jiyuu/ui/dialogs.py`), in the style of `FileNameDialog`: due (an
+  - [x] `TaskDialog` (`jiyuu/ui/dialogs.py`), in the style of `FileNameDialog`: due (an
         ISO date, `2026-10-25`, or a date and a time, `2026-10-25T14:00`, checked with
         `body.is_due_date`, an error shown under the field; empty for none), priority
-        (none, H, M, L); Save, "Not a task" (on an existing task), Cancel.
-  - [ ] Ctrl+T opens the dialog on the selected node (not on the root); Ctrl+D ticks or
+        (none, H, M, L); Save, "Not a task" (on an existing task), Cancel. As built: a
+        `Dropdown` for the priority; Enter in the due field saves; the title is "Make a
+        task" on a plain node and "Task" on a task; Save keeps the task's done state.
+  - [x] Ctrl+T opens the dialog on the selected node (not on the root); Ctrl+D ticks or
         unticks done; a click on the drawn checkbox does the same as Ctrl+D. All three go
         through new `Editor` methods (`set_task`, `toggle_done`), so they can be undone,
-        and are saved like any other change.
-  - [ ] A task's due date and priority are drawn on its node, after its text, and measured
-        with it.
-  - [ ] README: Ctrl+T and Ctrl+D in the key table, and the checkbox click.
-- Tests (`tests/test_editing.py`, `tests/test_ui.py`): `set_task` and `toggle_done` with
-  undo and redo, and doing nothing on the root; the dialog making, editing and unmaking a
-  task, refusing an invalid due date, and Cancel; Ctrl+D and a click on the checkbox; the
-  fields in the label.
+        and are saved like any other change. As built: the window's `ask_task`; a click
+        counts as on the checkbox from the box's left edge to `layout.checkbox_right` (the
+        padding and the checkbox's width), and also selects the task. The window forgets
+        which modifier keys are held when the dialog closes: Ctrl is let go while the
+        dialog has the keyboard, so the window never sees it released, and every arrow key
+        afterwards would have moved nodes as if Ctrl were held.
+  - [x] A task's due date and priority are drawn on its node, after its text, and measured
+        with it. As built: `☐ Foo · 2026-10-25 14:00 · H` (`layout.node_label`,
+        `FIELD_SEPARATOR` a middle dot between spaces; the `T` of a time shown as a
+        space).
+  - [x] README: Ctrl+T and Ctrl+D in the key table, and the checkbox click; the label in
+        the `.ink` section.
+- Tests (`tests/test_editing.py`, `tests/test_ui.py`, `tests/test_layout.py`): `set_task`
+  and `toggle_done` with undo and redo, keeping the link of a node made plain, and doing
+  nothing on the root, on the same task, or on a plain node; Ctrl+T on the root and on a
+  node; the dialog making a task (drawn with its label, Ctrl no longer held), editing one
+  (done kept), unmaking it, refusing `tomorrow` as a due date, and Cancel; Ctrl+D and its
+  undo, a click on the checkbox and one on the text; the label with its fields, and
+  `checkbox_right`.
 - Done when: the tests pass, and the user makes a task with Ctrl+T in a copy of
   `docs/example.ink`, gives it a due date and a priority, ticks it done with Ctrl+D and with a
   click, and undoes each.

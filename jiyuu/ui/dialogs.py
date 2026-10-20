@@ -1,4 +1,5 @@
-"""A dialog asking for the name of a new file, in the window's theme.
+"""Dialogs in the window's theme: one asking for the name of a new file, and one making a
+node a task or changing its task.
 
 Flet's own file picker needs Zenity on Linux, which is not always installed, so a file name
 is typed instead, into a field prefilled with a suggestion. The file goes in a folder fixed
@@ -13,7 +14,14 @@ from pathlib import Path
 
 import flet as ft
 
+from ..formats.body import is_due_date
+from ..model import PRIORITIES, Task
 from ..theme import Theme
+
+#: The priority dropdown's option for a task with no priority. Not one of `PRIORITIES`.
+NO_PRIORITY = "none"
+#: The label of each priority in the dropdown.
+PRIORITY_LABELS = {NO_PRIORITY: "None", "H": "H (high)", "M": "M (medium)", "L": "L (low)"}
 
 
 class FileNameDialog:
@@ -110,6 +118,111 @@ class FileNameDialog:
     def _on_dismiss(self, _event: ft.Event) -> None:
         # Closing the dialog through `_close` dismisses it too; only a dismissal that did
         # not come from `_close` still has anything to do.
+        if self.open:
+            self.open = False
+            self.on_closed()
+
+
+class TaskDialog:
+    """A modal dialog setting a node's due date and priority, which makes the node a task if
+    it is not one yet.
+
+    `task` is the node's task, or `None` for a plain node. Save calls `on_chosen` with the
+    task the fields describe, done or not as `task` was; "Not a task", shown only when
+    `task` is set, calls it with `None`. The due date is checked on Save: a value that is
+    not a date written `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM` is shown as an error under the
+    field, and the dialog stays open. `on_closed` is called once the dialog closes,
+    whichever way, Cancel included.
+    """
+
+    def __init__(
+        self,
+        page: ft.Page,
+        theme: Theme,
+        *,
+        text: str,
+        task: Task | None,
+        on_chosen: Callable[[Task | None], None],
+        on_closed: Callable[[], None],
+    ) -> None:
+        self.page = page
+        self.task = task
+        self.on_chosen = on_chosen
+        self.on_closed = on_closed
+        self.open = False
+        colors = theme.root
+        self.due = ft.TextField(
+            label="Due: YYYY-MM-DD or YYYY-MM-DDTHH:MM, empty for none",
+            value=task.due if task is not None and task.due else "",
+            autofocus=True,
+            color=colors.text,
+            cursor_color=colors.text,
+            border_color=theme.edge,
+            on_submit=self._save,
+        )
+        self.priority = ft.Dropdown(
+            label="Priority",
+            value=task.priority if task is not None and task.priority else NO_PRIORITY,
+            options=[ft.DropdownOption(key=key, text=label) for key, label in PRIORITY_LABELS.items()],
+            color=colors.text,
+            border_color=theme.edge,
+        )
+        actions: list[ft.Control] = [ft.TextButton(content=ft.Text("Save", color=colors.text), on_click=self._save)]
+        if task is not None:
+            actions.append(ft.TextButton(content=ft.Text("Not a task", color=colors.text), on_click=self._unset))
+        actions.append(ft.TextButton(content=ft.Text("Cancel", color=colors.text), on_click=self._cancel))
+        self.dialog = ft.AlertDialog(
+            modal=True,
+            bgcolor=colors.background,
+            title=ft.Text("Task" if task is not None else "Make a task", color=colors.text),
+            content=ft.Column(
+                tight=True,
+                controls=[ft.Text(text, color=colors.text), self.due, self.priority],
+            ),
+            actions=actions,
+            on_dismiss=self._on_dismiss,
+        )
+
+    def show(self) -> None:
+        """Opens the dialog."""
+        self.open = True
+        self.page.show_dialog(self.dialog)
+
+    def chosen_task(self) -> Task | None:
+        """The task the fields describe, or `None` while the due date is not valid."""
+        due = (self.due.value or "").strip()
+        if due and not is_due_date(due):
+            return None
+        priority = self.priority.value if self.priority.value in PRIORITIES else None
+        done = self.task is not None and self.task.done
+        return Task(done=done, due=due or None, priority=priority)
+
+    def _save(self, _event: ft.Event) -> None:
+        task = self.chosen_task()
+        if task is None:
+            self.due.error = "not a date written YYYY-MM-DD or YYYY-MM-DDTHH:MM"
+            self.page.update(self.due)
+            return
+        self.on_chosen(task)
+        self._close()
+
+    def _unset(self, _event: ft.Event) -> None:
+        self.on_chosen(None)
+        self._close()
+
+    def _cancel(self, _event: ft.Event) -> None:
+        self._close()
+
+    def _close(self) -> None:
+        if not self.open:
+            return
+        self.open = False
+        self.page.pop_dialog()
+        self.on_closed()
+
+    def _on_dismiss(self, _event: ft.Event) -> None:
+        # As in `FileNameDialog`: only a dismissal that did not come from `_close` still
+        # has anything to do.
         if self.open:
             self.open = False
             self.on_closed()

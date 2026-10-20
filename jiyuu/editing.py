@@ -1,5 +1,5 @@
 """Changing a map's tree: adding, deleting, renaming, moving, folding and re-siding nodes,
-with undo.
+making them tasks and ticking tasks done, with undo.
 
 An `Editor` holds one tree. Each of its commands takes the selected node, changes the tree
 in place, and returns the node to select afterwards. A command that would change nothing —
@@ -27,7 +27,7 @@ the links would otherwise be lost at the next save, and a sync could not delete 
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from .model import Node, Task, TaskLink, parent_of, walk
 
@@ -176,6 +176,27 @@ class Editor:
         state = self._capture()
         node.side = side
         return self._record(state, node, node)
+
+    def set_task(self, node: Node, task: Task | None) -> Node:
+        """Makes `node` a task with `task`, or gives it `task` if it is a task already, or
+        with `None` makes it a plain node again; returns `node`. Does nothing to the root,
+        which cannot be a task, or if `node` already has `task`.
+
+        A node made plain keeps its task link (`Node.task_link`), so that the task it was
+        synced with can still be deleted in taskwarrior.
+        """
+        if node is self.root or node.task == task:
+            return node
+        state = self._capture()
+        node.task = task
+        return self._record(state, node, node)
+
+    def toggle_done(self, node: Node) -> Node:
+        """Ticks task `node` done if it is not, unticks it otherwise; returns `node`. Does
+        nothing to a node that is not a task."""
+        if node.task is None:
+            return node
+        return self.set_task(node, replace(node.task, done=not node.task.done))
 
     def undo(self) -> Node | None:
         """Puts the tree back as it was before the latest change still in effect; returns

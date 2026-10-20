@@ -2,7 +2,18 @@
 
 import random
 
-from jiyuu.layout import CHECKBOX, CHECKBOX_DONE, LayoutSettings, Plane, Rect, layout, node_box_size, node_label, subtree_heights
+from jiyuu.layout import (
+    CHECKBOX,
+    CHECKBOX_DONE,
+    LayoutSettings,
+    Plane,
+    Rect,
+    checkbox_right,
+    layout,
+    node_box_size,
+    node_label,
+    subtree_heights,
+)
 from jiyuu.measure import FixedMeasurer
 from jiyuu.model import Node, Task
 
@@ -201,3 +212,15 @@ def test_a_task_is_labelled_and_measured_with_its_checkbox() -> None:
     assert [node_label(n) for n in (plain, pending, done)] == ["Foo", f"{CHECKBOX} Foo", f"{CHECKBOX_DONE} Foo"]
     assert node_label(Node(text="", task=Task())) == CHECKBOX
     assert node_box_size(pending, measurer, settings)[0] == node_box_size(plain, measurer, settings)[0] + 20
+
+
+def test_a_task_label_ends_with_its_due_date_and_priority() -> None:
+    assert node_label(Node(text="Foo", task=Task(due="2026-10-25", priority="H"))) == f"{CHECKBOX} Foo · 2026-10-25 · H"
+    assert node_label(Node(text="Foo", task=Task(done=True, due="2026-10-25T14:00"))) == f"{CHECKBOX_DONE} Foo · 2026-10-25 14:00"
+    assert node_label(Node(text="Foo", task=Task(priority="L"))) == f"{CHECKBOX} Foo · L"
+    assert node_label(Node(text="", task=Task(priority="L"))) == f"{CHECKBOX} · L"
+
+
+def test_the_checkbox_ends_one_checkbox_width_after_the_padding() -> None:
+    measurer, settings = FixedMeasurer(width_per_char=10, height=20), LayoutSettings()
+    assert checkbox_right(Rect(100, 0, 200, 36), measurer, settings) == 100 + settings.pad_x + 10

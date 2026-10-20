@@ -23,6 +23,9 @@ Side = str
 #: ballot box with a check mark (U+2610, U+2611; both in the bundled DejaVu Sans font).
 CHECKBOX = "\u2610"
 CHECKBOX_DONE = "\u2611"
+#: What separates a task's text, due date and priority in its label: a middle dot, with a
+#: space on each side.
+FIELD_SEPARATOR = " \u00b7 "
 
 
 @dataclass
@@ -91,11 +94,25 @@ class Plane:
 
 
 def node_label(node: Node) -> str:
-    """What is drawn in a node's box: its text, after a checkbox if the node is a task."""
+    """What is drawn in a node's box: its text, and if the node is a task, a checkbox before
+    the text and the task's due date and priority after it, each after a `FIELD_SEPARATOR`:
+    `☐ Foo · 2026-10-25 14:00 · H`."""
     if node.task is None:
         return node.text
     box = CHECKBOX_DONE if node.task.done else CHECKBOX
-    return f"{box} {node.text}" if node.text else box
+    label = f"{box} {node.text}" if node.text else box
+    if node.task.due:
+        label += FIELD_SEPARATOR + node.task.due.replace("T", " ")
+    if node.task.priority:
+        label += FIELD_SEPARATOR + node.task.priority
+    return label
+
+
+def checkbox_right(rect: Rect, measurer: Measurer, settings: LayoutSettings) -> float:
+    """The x of the right edge of the checkbox drawn in a task's box `rect`: a label is
+    drawn centred in its box, which is the label's width plus `pad_x` on each side, so the
+    checkbox starts `pad_x` in from the box's left edge."""
+    return rect.x + settings.pad_x + measurer.size_of(CHECKBOX)[0]
 
 
 def node_box_size(node: Node, measurer: Measurer, settings: LayoutSettings) -> tuple[float, float]:

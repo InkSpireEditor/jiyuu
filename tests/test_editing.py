@@ -298,3 +298,53 @@ def test_undo_puts_back_a_task_and_its_link() -> None:
     foo.task, foo.task_link = None, None  # as a later command would leave them
     editor.undo()
     assert (foo.text, foo.task, foo.task_link) == ("Foo", Task(done=True), _link("2", "Foo"))
+
+
+def test_set_task_makes_changes_and_unmakes_a_task_with_undo() -> None:
+    root = _tree()
+    foo = _find(root, "Foo")
+    editor = Editor(root)
+    assert editor.set_task(foo, Task(due="2026-10-25")) is foo and foo.task == Task(due="2026-10-25")
+    editor.set_task(foo, Task(due="2026-10-25", priority="H"))
+    editor.set_task(foo, None)
+    assert foo.task is None
+    editor.undo()
+    assert foo.task == Task(due="2026-10-25", priority="H")
+    editor.undo()
+    editor.undo()
+    assert foo.task is None
+    editor.redo()
+    assert foo.task == Task(due="2026-10-25")
+
+
+def test_set_task_keeps_the_link_of_a_node_made_plain() -> None:
+    root = _tree()
+    foo = _find(root, "Foo")
+    foo.task, foo.task_link = Task(), _link("2", "Foo")
+    Editor(root).set_task(foo, None)
+    assert foo.task is None and foo.task_link == _link("2", "Foo")
+
+
+def test_set_task_does_nothing_to_the_root_or_to_the_same_task() -> None:
+    root = _tree()
+    foo = _find(root, "Foo")
+    foo.task = Task(priority="L")
+    editor = Editor(root)
+    editor.set_task(root, Task())
+    editor.set_task(foo, Task(priority="L"))
+    assert root.task is None and editor.undo_stack == [] and editor.version == 0
+
+
+def test_toggle_done_ticks_and_unticks_a_task_and_leaves_a_plain_node() -> None:
+    root = _tree()
+    foo, bar = _find(root, "Foo"), _find(root, "Bar")
+    foo.task = Task(due="2026-10-25")
+    editor = Editor(root)
+    editor.toggle_done(foo)
+    assert foo.task == Task(done=True, due="2026-10-25")
+    editor.toggle_done(foo)
+    assert foo.task == Task(due="2026-10-25")
+    editor.undo()
+    assert foo.task == Task(done=True, due="2026-10-25")
+    editor.toggle_done(bar)
+    assert bar.task is None and len(editor.undo_stack) == 1

@@ -78,6 +78,8 @@ format described in [`jiyuu/assets/themes/README.md`](jiyuu/assets/themes/README
 | Delete | Delete the selected node and its branch |
 | Ctrl + Up or Down | Move the selected node up or down among its siblings |
 | Ctrl + the arrow towards the root | Move the selected node up one level; on a node directly under the root, move it to the root's other side |
+| Ctrl+T | Make the selected node a task, with a due date and a priority, or change them; on a task, "Not a task" makes it a plain node again |
+| Ctrl+D, or a click on a task's checkbox | Tick the task done, or untick it |
 | Ctrl+Z | Undo the latest change, folds included |
 | Ctrl+Y, Ctrl+Shift+Z | Redo |
 
@@ -128,7 +130,9 @@ can end with a due date and a priority, two spaces after the text:
     - [x] Bar
 ```
 
-`[ ]` is a task not done, `[x]` one that is done, drawn greyed and struck through. `due:`
+`[ ]` is a task not done, `[x]` one that is done, drawn greyed and struck through. In the
+window, a task is drawn with ☐ or ☑ before its text, and its due date and priority after it:
+`☐ Foo · 2026-10-25 · H`. `due:`
 takes a date, `2026-10-25`, or a date and a time, `2026-10-25T14:00`; `priority:` takes `H`,
 `M` or `L`. Either can be left out. A node that is not a task, but whose text starts with
 `[ ]`, `[x]` or a backslash, is written with a backslash in front: `- \[ ] not a task`. On a

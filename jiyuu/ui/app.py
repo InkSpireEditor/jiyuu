@@ -24,6 +24,9 @@ Keys that change the map, each acting on the selected node (see `jiyuu.editing`)
 - Ctrl+Up and Ctrl+Down move the node up or down among its siblings;
 - Ctrl and the arrow pointing towards the root moves the node up one level, next to its
   parent; on a node directly under the root, it moves the node to the root's other side;
+- Ctrl+T opens a dialog making the node a task, or changing its due date and priority if
+  it is one, or making it a plain node again (see `jiyuu.ui.dialogs.TaskDialog`);
+- Ctrl+D ticks a task done, or unticks it; clicking a task's checkbox does the same;
 - Ctrl+Z undoes the latest change, folds included; Ctrl+Y and Ctrl+Shift+Z redo it.
 
 Every change, folds included, is saved to the map's file shortly after it is made (see
@@ -65,13 +68,14 @@ import flet as ft
 
 from ..document import Document
 from ..editing import Editor
-from ..layout import Edge, LayoutSettings, Plane, Rect, layout
+from ..layout import Edge, LayoutSettings, Plane, Rect, checkbox_right, layout
 from ..measure import DEFAULT_FONT_PATH, DEFAULT_FONT_SIZE, PillowMeasurer
-from ..model import MindMap, Node
+from ..model import MindMap, Node, Task
 from ..navigation import DOWN, HOME, LEFT, RIGHT, UP, Navigator, is_inside
 from ..theme import Theme
 from ..view import View
 from .canvas import CORNER_RADIUS, FONT_FAMILY, MapDrawing
+from .dialogs import TaskDialog
 from .export import file_menu
 from .saving import Saving, window_title
 
@@ -424,8 +428,9 @@ class MapWindow:
 
     def tap_at(self, wx: float, wy: float) -> None:
         """Handles a click at window position `(wx, wy)`: folds or unfolds the node whose
-        fold marker is there, or else selects the node whose box is there, or else does
-        nothing. A text field still open is closed first, keeping its text."""
+        fold marker is there, or else ticks or unticks the task whose checkbox is there and
+        selects it, or else selects the node whose box is there, or else does nothing. A
+        text field still open is closed first, keeping its text."""
         self.finish_editing(keep=True)
         x, y = self.view.to_content(wx, wy)
         marked = self.drawing.marker_at(x, y)
@@ -433,8 +438,41 @@ class MapWindow:
             self.toggle_fold(marked)
             return
         node = self.drawing.node_at(x, y)
-        if node is not None:
+        if node is None:
+            return
+        if node.task is not None and x <= checkbox_right(self.rects[node], self.measurer, self.settings):
+            self.selected = node
+            self.edit(Editor.toggle_done)
+        else:
             self.select(node)
+
+    def ask_task(self, node: Node) -> TaskDialog | None:
+        """Opens the task dialog on `node`, and returns it; on the root, which cannot be a
+        task, does nothing and returns `None`. Saving the dialog sets `node`'s task (see
+        `Editor.set_task`), and the keyboard comes back to the window once it closes, with
+        no modifier key counted as held."""
+        if node is self.mindmap.root:
+            return None
+        dialog = TaskDialog(
+            self.page,
+            self.theme,
+            text=node.text,
+            task=node.task,
+            on_chosen=lambda task: self._set_task(node, task),
+            on_closed=self._task_dialog_closed,
+        )
+        dialog.show()
+        return dialog
+
+    def _task_dialog_closed(self) -> None:
+        # Ctrl was held to open the dialog, and is let go while the dialog has the
+        # keyboard, so the window never sees it released.
+        self.held.clear()
+        self.take_keyboard()
+
+    def _set_task(self, node: Node, task: Task | None) -> None:
+        self.selected = node
+        self.edit(lambda editor, selected: editor.set_task(selected, task))
 
     @property
     def ctrl_held(self) -> bool:
@@ -507,6 +545,10 @@ class MapWindow:
                 self.undo()
         elif key == "Y":
             self.redo()
+        elif key == "T":
+            self.ask_task(self.selected)
+        elif key == "D":
+            self.edit(Editor.toggle_done)
 
     def _on_key_up(self, event: ft.KeyUpEvent) -> None:
         self.held.discard(_modifier(event.key) or "")
