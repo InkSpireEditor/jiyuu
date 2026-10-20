@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from jiyuu.formats import mapfile
-from jiyuu.model import MindMap, Node, node_id
+from jiyuu.model import MindMap, Node, Task, TaskLink, node_id
 
 DATA = Path(__file__).parent / "data"
 INK_FIXTURES = DATA / "ink"
@@ -18,7 +18,7 @@ def _fixture(name: str) -> str:
     return (INK_FIXTURES / name).read_text(encoding="utf-8")
 
 
-@pytest.mark.parametrize("name", ["worked-example.ink", "unknown-section.ink", "folded.ink"])
+@pytest.mark.parametrize("name", ["worked-example.ink", "unknown-section.ink", "folded.ink", "tasks.ink"])
 def test_read_then_dump_reproduces_the_file_byte_for_byte(name: str) -> None:
     """Every fixture that is already in the form `dump` writes comes back unchanged,
     including a section jiyuu does not know."""
@@ -196,3 +196,92 @@ def test_dump_reads_back_as_the_same_tree_and_metadata() -> None:
     first, second = mindmap.root.children
     assert (first.side, first.folded, second.side, second.folded) == ("left", True, "right", False)
     assert second.children[0].folded is True
+
+
+FOO_UUID = "0b6c4e2a-5d1f-4c3e-9a7b-2f8e6d4c1a90"
+DELETED_UUID = "11111111-1111-4111-8111-111111111111"
+
+
+def _by_text(mindmap: MindMap, text: str) -> Node:
+    pending = [mindmap.root]
+    while pending:
+        node = pending.pop()
+        if node.text == text:
+            return node
+        pending.extend(node.children)
+    raise LookupError(text)
+
+
+def test_tasks_and_their_links_are_read() -> None:
+    """The task fixture: Foo synced, Bar done and never synced, a plain node whose text
+    looks like a checkbox, Qux with an escaped field, and the link of a deleted task."""
+    mindmap, problems = mapfile.read(_fixture("tasks.ink"))
+    assert mindmap is not None and problems == []
+    foo, bar = _by_text(mindmap, "Foo"), _by_text(mindmap, "Bar")
+    assert foo.task == Task(due="2026-10-25", priority="H")
+    assert foo.task_link == TaskLink(FOO_UUID, "20261019T211745Z", "Foo", Task(due="2026-10-25", priority="H"))
+    assert foo.extra == {}
+    assert (bar.task, bar.task_link) == (Task(done=True), None)
+    assert _by_text(mindmap, "[ ] not a task").task is None
+    assert _by_text(mindmap, "Qux due:soon").task == Task(due="2026-10-25T14:00")
+    assert mindmap.orphan_tasks == [TaskLink(DELETED_UUID, "20261019T211810Z", "Deleted", Task())]
+
+
+def test_making_a_node_a_task_keeps_its_id() -> None:
+    """The id comes from the text alone, so the node keeps its side and folding."""
+    text = _fixture("folded.ink")
+    mindmap, _ = mapfile.read(text)
+    assert mindmap is not None
+    goals = mindmap.root.children[0]
+    goals.task = Task(due="2026-10-25")
+    reread, problems = mapfile.read(mapfile.dump(mindmap))
+    assert reread is not None and problems == []
+    assert (reread.root.children[0].side, reread.root.children[0].folded) == (goals.side, goals.folded)
+
+
+def test_a_task_moved_by_hand_finds_its_entry_by_text() -> None:
+    """Foo moved from Goals to Risks in a text editor: its id changed, and its entry is
+    attached to it again, and written under its new id."""
+    text = _fixture("tasks.ink").replace("    - [ ] Foo  due:2026-10-25 priority:H\n", "")
+    text = text.replace("  - Risks\n", "  - Risks\n    - [ ] Foo  due:2026-10-25 priority:H\n")
+    mindmap, problems = mapfile.read(text)
+    assert mindmap is not None and problems == []
+    foo = _by_text(mindmap, "Foo")
+    assert foo.task_link is not None and foo.task_link.uuid == FOO_UUID
+    assert f'"{node_id([["Risks", 1], ["Foo", 1]])}": {{kind: "task", uuid: "{FOO_UUID}"' in mapfile.dump(mindmap)
+
+
+def test_a_task_renamed_by_hand_leaves_an_orphaned_link_that_is_reported() -> None:
+    """Foo renamed in a text editor: no task has its text, so its link is kept as an
+    orphan, reported, and written back under its uuid, which is then not reported again."""
+    text = _fixture("tasks.ink").replace("[ ] Foo  due", "[ ] Fooo  due")
+    mindmap, problems = mapfile.read(text)
+    assert mindmap is not None
+    assert _by_text(mindmap, "Fooo").task_link is None
+    assert [link.uuid for link in mindmap.orphan_tasks] == [FOO_UUID, DELETED_UUID]
+    assert [(p.level, p.message) for p in problems] == [("warning", "the task entry for 'Foo' matches no task in the body")]
+    assert problems[0].line == text.splitlines().index("===== ink:nodes") + 2
+
+    dumped = mapfile.dump(mindmap)
+    assert f'"{FOO_UUID}": {{kind: "task", uuid: "{FOO_UUID}"' in dumped
+    _, problems = mapfile.read(dumped)
+    assert problems == []
+
+
+def test_a_task_made_plain_by_hand_keeps_its_link() -> None:
+    """The checkbox removed in a text editor: the node is not a task, and keeps its link
+    so that the task can be deleted in taskwarrior."""
+    mindmap, _ = mapfile.read(_fixture("tasks.ink").replace("[ ] Foo  due:2026-10-25 priority:H", "Foo"))
+    assert mindmap is not None
+    foo = _by_text(mindmap, "Foo")
+    assert foo.task is None and foo.task_link is not None
+    assert f'uuid: "{FOO_UUID}"' in mapfile.dump(mindmap)
+
+
+def test_a_task_entry_with_no_uuid_is_reported_and_dropped() -> None:
+    text = '===== ink:body\n- Project\n  - Goals\n===== ink:nodes\n"7be48fc73f0ebe9c": {kind: "task", text: "Goals", x: "1"}\n'
+    mindmap, problems = mapfile.read(text)
+    assert mindmap is not None
+    goals = mindmap.root.children[0]
+    assert (goals.task_link, goals.extra) == (None, {"x": "1"})
+    assert [(p.line, p.level) for p in problems] == [(5, "warning")] and "no uuid" in problems[0].message

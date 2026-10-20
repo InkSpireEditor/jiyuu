@@ -5,6 +5,9 @@ canvas: "#2e3440"
 edge: "#81a1c1"
 selection: {text: "#2e3440", background: "#88c0d0"}
 root: {text: "#eceff4", background: "#4c566a"}
+# Done tasks: nord1 as the background; the text is a grey between nord3 and nord4,
+# not a Nord colour, since nord3's contrast against nord1 is too low to read.
+task_done: {text: "#8a94a8", background: "#3b4252"}
 levels:
   - {text: "#eceff4", background: "#bf616a"}
   - {text: "#2e3440", background: "#d08770"}

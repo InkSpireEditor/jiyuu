@@ -23,6 +23,7 @@ canvas: "#000000"
 edge: "#ffffff"
 selection: {text: "#000000", background: "#ffffff"}
 root: {text: "#ffffff", background: "#000000"}
+task_done: {text: "#888888", background: "#000000"}
 levels:
   - {text: "#000000", background: "#ffffff"}
   - {text: "#ffffff", background: "#000000"}
@@ -52,7 +53,7 @@ def test_every_bundled_theme_is_readable(name: str) -> None:
     """Every text colour in a bundled theme contrasts with its background by at least the
     floor, and so does its edge colour with its canvas."""
     theme = load_theme(name)
-    pairs = [("root", theme.root), ("selection", theme.selection)] + [
+    pairs = [("root", theme.root), ("selection", theme.selection), ("task_done", theme.task_done)] + [
         (f"levels[{i}]", level) for i, level in enumerate(theme.levels)
     ]
     for label, pair in pairs:
@@ -76,6 +77,7 @@ def test_a_theme_file_outside_the_package_loads_like_a_bundled_one(tmp_path: Pat
     theme = load_theme(_write(tmp_path, VALID))
     assert theme.name == "Test"
     assert theme.levels == (Colors("#000000", "#ffffff"), Colors("#ffffff", "#000000"))
+    assert theme.task_done == Colors("#888888", "#000000")
 
 
 def test_contrast_ratio_of_known_pairs() -> None:
@@ -89,13 +91,14 @@ def test_contrast_ratio_of_known_pairs() -> None:
     ("text", "expected"),
     [
         (VALID.replace('canvas: "#000000"\n', ""), "missing 'canvas'"),
+        (VALID.replace('task_done: {text: "#888888", background: "#000000"}\n', ""), "'task_done' must be a mapping"),
         (VALID.replace('"#000000"', "#000000", 1), "not a \"#rrggbb\" colour"),
         (VALID.replace('canvas: "#000000"', 'canvas: "black"'), "not a \"#rrggbb\" colour"),
         (VALID.split("levels:", maxsplit=1)[0] + "levels: []\n", "non-empty list"),
         ("- just\n- a list\n", "YAML mapping"),
         (VALID.replace('root: {text: "#ffffff", background: "#000000"}', 'root: "#000000"'), "mapping"),
     ],
-    ids=["missing key", "unquoted colour", "named colour", "empty levels", "not a mapping", "pair not a mapping"],
+    ids=["missing key", "missing task_done", "unquoted colour", "named colour", "empty levels", "not a mapping", "pair not a mapping"],
 )
 def test_an_unusable_theme_file_is_refused_with_its_reason(
     tmp_path: Path, text: str, expected: str

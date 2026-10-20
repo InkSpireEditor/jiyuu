@@ -1,9 +1,9 @@
 """jiyuu's in-memory mind map: the node tree, and the ids its stored metadata is keyed by.
 
 A map is a tree of `Node` objects reachable from one root. Everything a node carries beyond
-its text and children — whether it is folded, which side of the root it is drawn on, and any
-other metadata attached to it — lives on the `Node` itself; nothing here reads or writes a
-file.
+its text and children — whether it is folded, which side of the root it is drawn on, whether
+it is a task, and any other metadata attached to it — lives on the `Node` itself; nothing
+here reads or writes a file.
 
 Metadata kept separately from the tree, rather than inline in it, needs a key that survives
 being written out and read back without depending on which Python object a node happens to
@@ -27,6 +27,41 @@ from typing import Iterator
 #: straight out of JSON needs no conversion before being passed to `node_id`.
 NodePath = list[list[str | int]]
 
+#: The priorities a task can have, highest first: taskwarrior's default `priority` values
+#: (https://taskwarrior.org/docs/priority/).
+PRIORITIES = ("H", "M", "L")
+
+
+@dataclass(frozen=True)
+class Task:
+    """What makes a node a task: whether it is done, when it is due, and its priority.
+
+    `due` is an ISO date, `"2026-10-25"`, or an ISO date and time to the minute,
+    `"2026-10-25T14:00"`, in local time. `priority` is one of `PRIORITIES`. Either is `None`
+    when not set. Frozen, so that a recorded `Task` can be kept as it is and put back later
+    without being copied.
+    """
+
+    done: bool = False
+    due: str | None = None
+    priority: str | None = None
+
+
+@dataclass(frozen=True)
+class TaskLink:
+    """The task in taskwarrior (https://taskwarrior.org) that a node's task is kept in.
+
+    `uuid` is the taskwarrior task's uuid. `synced` is the time of the last sync, as
+    taskwarrior's `modified` timestamp of the task at that moment (`"20261019T211745Z"`).
+    `text` and `task` are the node's text and task as they were at that sync: comparing
+    them with the node's current ones tells whether the node changed since.
+    """
+
+    uuid: str
+    synced: str
+    text: str
+    task: Task
+
 
 @dataclass(eq=False)
 class Node:
@@ -45,6 +80,11 @@ class Node:
     #: `"left"`, `"right"`, or `None`. Only meaningful on a node whose parent is the root;
     #: `None` there means its side is undecided, not that it has none.
     side: str | None = None
+    #: Set when this node is a task; `None` on a plain node. Never set on the root.
+    task: Task | None = None
+    #: The taskwarrior task this node was last synced with, if any. Kept when `task` is set
+    #: back to `None`, so that the next sync can delete the taskwarrior task.
+    task_link: TaskLink | None = None
     #: Metadata attached to this node that this module does not itself give a meaning to.
     extra: dict[str, str] = field(default_factory=dict)
 
@@ -61,6 +101,10 @@ class MindMap:
     root: Node
     meta: dict[str, object] = field(default_factory=dict)
     other_sections: dict[str, str] = field(default_factory=dict)
+    #: Links to taskwarrior tasks whose node is no longer in the tree: deleted, or renamed
+    #: in a text editor so that its stored metadata no longer finds it. Kept until a sync
+    #: has deleted their taskwarrior tasks.
+    orphan_tasks: list[TaskLink] = field(default_factory=list)
 
 
 def walk(root: Node) -> Iterator[Node]:

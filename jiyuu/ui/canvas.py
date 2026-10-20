@@ -1,9 +1,10 @@
 """Draws a laid-out map as shapes on canvases: the edges, the node boxes, the fold markers.
 
 Three canvases are stacked, bottom to top: one holding every edge as a cubic Bézier curve,
-one holding every node's box (a filled rounded rectangle, its border, and its text centred
+one holding every node's box (a filled rounded rectangle, its border, and its label centred
 on it), and one holding every fold marker (a circle, and the count it shows). Every colour
-comes from the `Theme` passed in.
+comes from the `Theme` passed in. A task that is done is drawn in the theme's `task_done`
+colours, its label struck through.
 
 Shapes rather than one widget per node: Flutter rebuilds every widget under the drawing
 surface each time the surface moves, so on a map of several hundred nodes a pan or zoom
@@ -31,7 +32,7 @@ from dataclasses import dataclass
 import flet as ft
 import flet.canvas as cv
 
-from ..layout import Edge, LayoutSettings, Rect
+from ..layout import Edge, LayoutSettings, Rect, node_label
 from ..measure import DEFAULT_FONT_SIZE
 from ..model import Node, depths, descendant_count
 from ..theme import Colors, Theme
@@ -123,9 +124,10 @@ class MapDrawing:
         self._border_paint = self._stroke(BORDER_WIDTH)
         self._marker_paint = ft.Paint(color=theme.edge)
         self._count_style = ft.TextStyle(font_family=FONT_FAMILY, size=MARKER_FONT_SIZE, color=theme.canvas)
-        #: Box fills and text styles, by colour, each made the first time it is used.
+        #: Box fills by colour, and text styles by colour and whether they strike the text
+        #: through, each made the first time it is used.
         self._fills: dict[str, ft.Paint] = {}
-        self._text_styles: dict[str, ft.TextStyle] = {}
+        self._text_styles: dict[tuple[str, bool], ft.TextStyle] = {}
 
     def draw(
         self,
@@ -172,13 +174,13 @@ class MapDrawing:
         return [self.edges, self.boxes, self.markers]
 
     def set_selected(self, previous: Node | None, selected: Node) -> list[cv.Shape]:
-        """Recolours `previous`'s box back to its depth's colours and `selected`'s in the
-        theme's selection colours, leaving every other shape as it was; returns the shapes
+        """Recolours `previous`'s box back to its own colours (see `_colors_of`) and
+        `selected`'s in the theme's selection colours, leaving every other shape as it was; returns the shapes
         recoloured."""
         changed: list[cv.Shape] = []
         if previous is not None and previous in self._rects:
-            changed += self._colour(previous, self.theme.for_depth(self._depths[previous]))
-        changed += self._colour(selected, self.theme.selection)
+            changed += self._colour(previous, self._colors_of(previous, False))
+        changed += self._colour(selected, self._colors_of(selected, True))
         return changed
 
     def node_at(self, x: float, y: float) -> Node | None:
@@ -221,7 +223,7 @@ class MapDrawing:
         path.elements = elements
 
     def _draw_box(self, node: Node, rect: Rect, selected: bool) -> None:
-        """Makes `node`'s box shapes if new, and sets them to `rect`, its text and colours."""
+        """Makes `node`'s box shapes if new, and sets them to `rect`, its label and colours."""
         box = self._box_shapes.get(node)
         if box is None:
             box = self._box_shapes[node] = _BoxShapes(
@@ -233,8 +235,8 @@ class MapDrawing:
         for shape in (box.fill, box.border):
             shape.x, shape.y, shape.width, shape.height = rect.x, rect.y, rect.width, rect.height
         box.text.x, box.text.y = rect.x + rect.width / 2, rect.y + rect.height / 2
-        box.text.value = node.text
-        self._colour(node, self.theme.selection if selected else self.theme.for_depth(self._depths[node]))
+        box.text.value = node_label(node)
+        self._colour(node, self._colors_of(node, selected))
 
     def _draw_marker(self, node: Node, rect: Rect, side: str) -> None:
         """Makes `node`'s fold marker shapes if new, and places them on its outer `side`.
@@ -255,16 +257,30 @@ class MapDrawing:
         marker.count.x, marker.count.y = centre
         marker.count.value = str(descendant_count(node)) if node.folded else ""
 
+    def _colors_of(self, node: Node, selected: bool) -> Colors:
+        """The colours `node`'s box is drawn in: the selection's if it is selected, else the
+        theme's `task_done` if it is a task that is done, else its depth's."""
+        if selected:
+            return self.theme.selection
+        if node.task is not None and node.task.done:
+            return self.theme.task_done
+        return self.theme.for_depth(self._depths[node])
+
     def _colour(self, node: Node, colors: Colors) -> list[cv.Shape]:
-        """Sets `node`'s box fill and text colour from `colors`; returns the two shapes."""
+        """Sets `node`'s box fill and text colour from `colors`, its text struck through if
+        it is a task that is done; returns the two shapes."""
         box = self._box_shapes[node]
         fill = self._fills.get(colors.background)
         if fill is None:
             fill = self._fills[colors.background] = ft.Paint(color=colors.background)
-        style = self._text_styles.get(colors.text)
+        struck = node.task is not None and node.task.done
+        style = self._text_styles.get((colors.text, struck))
         if style is None:
-            style = self._text_styles[colors.text] = ft.TextStyle(
-                font_family=FONT_FAMILY, size=DEFAULT_FONT_SIZE, color=colors.text
+            style = self._text_styles[(colors.text, struck)] = ft.TextStyle(
+                font_family=FONT_FAMILY,
+                size=DEFAULT_FONT_SIZE,
+                color=colors.text,
+                decoration=ft.TextDecoration.LINE_THROUGH if struck else None,
             )
         box.fill.paint, box.text.style = fill, style
         return [box.fill, box.text]

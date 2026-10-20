@@ -12,9 +12,9 @@ import pytest
 
 from jiyuu.document import Document, open_document
 from jiyuu.formats import mm
-from jiyuu.layout import LayoutSettings, Plane, layout
+from jiyuu.layout import CHECKBOX, CHECKBOX_DONE, LayoutSettings, Plane, layout
 from jiyuu.measure import FixedMeasurer
-from jiyuu.model import MindMap, Node
+from jiyuu.model import MindMap, Node, Task
 from jiyuu.theme import load_theme
 from jiyuu.ui.dialogs import FileNameDialog
 from jiyuu.ui.export import ask_export
@@ -108,6 +108,30 @@ def test_every_colour_drawn_comes_from_the_theme() -> None:
     for circle, count in _markers(drawing):
         assert circle.paint.color == THEME.edge
         assert cast(ft.TextStyle, count.style).color == THEME.canvas
+
+
+def test_a_task_is_drawn_with_its_checkbox_and_a_done_one_greyed_and_struck_through() -> None:
+    """I/O is a task not done, TODO one that is done: TODO is in the theme's `task_done`
+    colours with its text struck through, also once selected, and I/O is as before."""
+    root, goals, _ = _tree()
+    io, todo = goals.children
+    io.task, todo.task = Task(), Task(done=True)
+    drawing = MapDrawing(THEME, SETTINGS)
+    _draw(drawing, root)
+    io_fill, _, io_text = _box(drawing, f"{CHECKBOX} I/O")
+    todo_fill, _, todo_text = _box(drawing, f"{CHECKBOX_DONE} TODO")
+
+    assert io_fill.paint.color == THEME.for_depth(2).background
+    assert cast(ft.TextStyle, io_text.style).decoration is None
+    assert todo_fill.paint.color == THEME.task_done.background
+    style = cast(ft.TextStyle, todo_text.style)
+    assert (style.color, style.decoration) == (THEME.task_done.text, ft.TextDecoration.LINE_THROUGH)
+
+    drawing.set_selected(None, todo)
+    assert todo_fill.paint.color == THEME.selection.background
+    assert cast(ft.TextStyle, todo_text.style).decoration == ft.TextDecoration.LINE_THROUGH
+    drawing.set_selected(todo, io)
+    assert todo_fill.paint.color == THEME.task_done.background
 
 
 def test_a_second_draw_keeps_every_shape() -> None:

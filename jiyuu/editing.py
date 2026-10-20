@@ -13,24 +13,38 @@ the same side. A new sibling of a first-level node goes on that node's side, and
 promoted to the first level goes on the side of the node it came out of.
 
 Undo restores the tree onto the very `Node` objects it was made of, rather than swapping in
-a copy of it: before each command, every node's text, folding, side and list of children is
-recorded, and undoing writes those values back. A node that a command removed is still
+a copy of it: before each command, every node's text, folding, side, task, task link and
+list of children is recorded, along with the map's list of orphaned task links, and undoing
+writes those values back. A node that a command removed is still
 referenced by that record, so undoing brings the same object back. A caller that keeps
 something per `Node` object, such as the shapes a window draws each node with, can
 therefore keep it across an undo.
+
+Deleting a branch that holds tasks synced with taskwarrior moves their task links to the
+map's orphaned task links (`MindMap.orphan_tasks`): the nodes are no longer in the tree, so
+the links would otherwise be lost at the next save, and a sync could not delete the tasks.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .model import Node, parent_of, walk
+from .model import Node, Task, TaskLink, parent_of, walk
 
 #: How many commands can be undone; the oldest is dropped first.
 UNDO_LIMIT = 100
 
-#: One node's recorded values: the node, its text, folded, side, and a copy of its children.
-_NodeState = tuple[Node, str, bool, str | None, list[Node]]
+#: One node's recorded values: the node, its text, folded, side, task, task link, and a copy
+#: of its children.
+_NodeState = tuple[Node, str, bool, str | None, Task | None, TaskLink | None, list[Node]]
+
+
+@dataclass
+class _State:
+    """Every node's recorded values, and a copy of the orphaned task links."""
+
+    nodes: list[_NodeState]
+    orphan_tasks: list[TaskLink]
 
 
 @dataclass
@@ -39,7 +53,7 @@ class UndoEntry:
     undoes: `before` is selected when the tree is put back in this state, `after` when the
     change is made again."""
 
-    state: list[_NodeState]
+    state: _State
     before: Node
     after: Node
 
@@ -47,8 +61,10 @@ class UndoEntry:
 class Editor:
     """The commands that change one tree, and their undo and redo stacks."""
 
-    def __init__(self, root: Node) -> None:
+    def __init__(self, root: Node, orphan_tasks: list[TaskLink] | None = None) -> None:
         self.root = root
+        #: The map's orphaned task links (`MindMap.orphan_tasks`), changed in place.
+        self.orphan_tasks = orphan_tasks if orphan_tasks is not None else []
         #: Changes that can be undone, the latest last.
         self.undo_stack: list[UndoEntry] = []
         #: Changes undone that can be made again, the latest undone last. Emptied by any
@@ -85,7 +101,8 @@ class Editor:
 
     def delete(self, node: Node) -> Node:
         """Removes `node` and everything under it; returns its previous sibling, else its
-        next sibling, else its parent. The root cannot be deleted."""
+        next sibling, else its parent. The root cannot be deleted. The task links in the
+        branch are added to `orphan_tasks`."""
         if node is self.root:
             return node
         parent = self._parent(node)
@@ -99,6 +116,7 @@ class Editor:
             selected = parent
         state = self._capture()
         parent.children.remove(node)
+        self.orphan_tasks.extend(n.task_link for n in (node, *walk(node)) if n.task_link is not None)
         return self._record(state, node, selected)
 
     def rename(self, node: Node, text: str) -> Node:
@@ -206,21 +224,24 @@ class Editor:
             return [child for child in parent.children if child.side == node.side]
         return parent.children
 
-    def _capture(self) -> list[_NodeState]:
-        """Every node's current values, the root's included."""
-        return [
-            (node, node.text, node.folded, node.side, list(node.children))
+    def _capture(self) -> _State:
+        """Every node's current values, the root's included, and the orphaned task links."""
+        nodes = [
+            (node, node.text, node.folded, node.side, node.task, node.task_link, list(node.children))
             for node in (self.root, *walk(self.root))
         ]
+        return _State(nodes, list(self.orphan_tasks))
 
-    def _restore(self, state: list[_NodeState]) -> None:
-        """Writes the values in `state` back onto their nodes."""
-        for node, text, folded, side, children in state:
+    def _restore(self, state: _State) -> None:
+        """Writes the values in `state` back onto their nodes and the orphaned task links."""
+        for node, text, folded, side, task, task_link, children in state.nodes:
             node.text, node.folded, node.side = text, folded, side
+            node.task, node.task_link = task, task_link
             node.children = list(children)
+        self.orphan_tasks[:] = state.orphan_tasks
         self.version += 1
 
-    def _record(self, state: list[_NodeState], before: Node, after: Node) -> Node:
+    def _record(self, state: _State, before: Node, after: Node) -> Node:
         """Records a change just made, from `state`, as one that can be undone; returns
         `after`."""
         self.undo_stack.append(UndoEntry(state, before, after))

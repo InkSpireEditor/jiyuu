@@ -1,9 +1,9 @@
 """Colour themes: every colour jiyuu draws a map with, read from a YAML file.
 
 A theme names a colour for each part of a drawn map: the canvas behind it, its edges (also
-used for node borders), the selected node, the root, and one text/background pair per depth
+used for node borders), the selected node, the root, one text/background pair per depth
 level below the root, reused from the first once a map is deeper than the theme has levels
-for. Themes live in files rather than in code so that one can be changed, or a new one
+for, and a pair for tasks that are done. Themes live in files rather than in code so that one can be changed, or a new one
 written, without touching anything else; `jiyuu/assets/themes/README.md` describes the
 format and where each bundled theme's colours come from.
 
@@ -56,6 +56,8 @@ class Theme:
     #: One pair per depth below the root: `levels[0]` for depth 1, `levels[1]` for depth 2,
     #: and so on, starting again from `levels[0]` past the last one.
     levels: tuple[Colors, ...]
+    #: A task that is done, at any depth.
+    task_done: Colors
 
     def for_depth(self, depth: int) -> Colors:
         """The colours for a node `depth` levels below the root (`0` is the root itself)."""
@@ -135,4 +137,5 @@ def load_theme(name_or_path: str) -> Theme:
         levels=tuple(
             _pair({f"levels[{i}]": level}, f"levels[{i}]", source) for i, level in enumerate(levels)
         ),
+        task_done=_pair(data, "task_done", source),
     )

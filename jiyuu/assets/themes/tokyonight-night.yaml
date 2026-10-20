@@ -6,6 +6,8 @@ canvas: "#1a1b26"
 edge: "#a9b1d6"
 selection: {text: "#16161e", background: "#c0caf5"}
 root: {text: "#c0caf5", background: "#292e42"}
+# Done tasks: dark5 on bg_dark, both from the "storm" palette.
+task_done: {text: "#737aa2", background: "#1f2335"}
 levels:
   - {text: "#16161e", background: "#7aa2f7"}
   - {text: "#16161e", background: "#bb9af7"}

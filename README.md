@@ -119,6 +119,23 @@ kind: mindmap
 "32a21dfedf2cf99c": {side: "left"}
 ```
 
+A node can be a task. Its line then starts with a checkbox, as in a Markdown task list, and
+can end with a due date and a priority, two spaces after the text:
+
+```
+  - Goals
+    - [ ] Foo  due:2026-10-25 priority:H
+    - [x] Bar
+```
+
+`[ ]` is a task not done, `[x]` one that is done, drawn greyed and struck through. `due:`
+takes a date, `2026-10-25`, or a date and a time, `2026-10-25T14:00`; `priority:` takes `H`,
+`M` or `L`. Either can be left out. A node that is not a task, but whose text starts with
+`[ ]`, `[x]` or a backslash, is written with a backslash in front: `- \[ ] not a task`. On a
+task's line, words at the end of the text that start with `due:` or `priority:` are written
+with a backslash before the colon, `due\:soon`, so that they are not read as fields. The
+root cannot be a task.
+
 Each `nodes` line is keyed by an id computed from the node's text and the text of the nodes
 above it. Renaming or moving a node in a text editor changes its id, so its line no longer
 applies: the node opens unfolded, and its side is chosen again.

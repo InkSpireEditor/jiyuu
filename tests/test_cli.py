@@ -222,6 +222,18 @@ def test_opening_an_ink_file_writes_nothing(monkeypatch: pytest.MonkeyPatch, tmp
     assert [p.name for p in tmp_path.iterdir()] == ["map.ink"]
 
 
+def test_check_reports_a_task_whose_entry_matches_no_task(tmp_path: Path) -> None:
+    """The task fixture is clean; with its synced task renamed by hand, `check` warns that
+    the task's entry matches no task, and still succeeds."""
+    fixture = Path(__file__).parent / "data" / "ink" / "tasks.ink"
+    assert runner.invoke(app, ["check", str(fixture)]).stdout == ""
+    renamed = tmp_path / "tasks.ink"
+    renamed.write_text(fixture.read_text(encoding="utf-8").replace("[ ] Foo  due", "[ ] Fooo  due"), encoding="utf-8")
+    result = runner.invoke(app, ["check", str(renamed)])
+    assert result.exit_code == 0
+    assert "the task entry for 'Foo' matches no task in the body" in result.stdout
+
+
 def test_check_on_a_clean_ink_file_prints_nothing() -> None:
     """A `.ink` file with nothing wrong produces no output, and succeeds."""
     result = runner.invoke(app, ["check", str(Path(__file__).parent / "data" / "ink" / "worked-example.ink")])

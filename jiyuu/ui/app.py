@@ -162,7 +162,7 @@ class MapWindow:
         #: The modifier keys held down: `"Control"` and `"Shift"`, whichever side of the
         #: keyboard they are on.
         self.held: set[str] = set()
-        self.editor = Editor(mindmap.root)
+        self.editor = Editor(mindmap.root, mindmap.orphan_tasks)
         #: The node whose text is being edited, if any, and the field it is edited in.
         self.text_edit: TextEdit | None = None
         #: The control the window's key presses reach while no text is being edited.
@@ -332,7 +332,7 @@ class MapWindow:
             self.text_edit = None
             self.surface.controls = [self.layer]
         self.mindmap = mindmap
-        self.editor = Editor(mindmap.root)
+        self.editor = Editor(mindmap.root, mindmap.orphan_tasks)
         self.navigator = Navigator(mindmap.root)
         self.selected = mindmap.root
         self.redraw()

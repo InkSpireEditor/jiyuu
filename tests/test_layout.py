@@ -2,9 +2,9 @@
 
 import random
 
-from jiyuu.layout import LayoutSettings, Plane, Rect, layout, subtree_heights
+from jiyuu.layout import CHECKBOX, CHECKBOX_DONE, LayoutSettings, Plane, Rect, layout, node_box_size, node_label, subtree_heights
 from jiyuu.measure import FixedMeasurer
-from jiyuu.model import Node
+from jiyuu.model import Node, Task
 
 MEASURER = FixedMeasurer(width_per_char=10.0, height=16.0)
 SETTINGS = LayoutSettings()  # pad_x=16, pad_y=8, vertical_gap=12, horizontal_gap=48
@@ -191,3 +191,13 @@ def test_a_layout_measures_each_node_a_fixed_number_of_times_however_deep() -> N
 
     assert len(rects) == 781
     assert set(measurer.calls.values()) == {2}
+
+
+def test_a_task_is_labelled_and_measured_with_its_checkbox() -> None:
+    """A task's label starts with a checkbox and a space, and its box is two characters
+    wider than its text's; a plain node's label is its text."""
+    measurer, settings = FixedMeasurer(width_per_char=10, height=20), LayoutSettings()
+    plain, pending, done = Node(text="Foo"), Node(text="Foo", task=Task()), Node(text="Foo", task=Task(done=True))
+    assert [node_label(n) for n in (plain, pending, done)] == ["Foo", f"{CHECKBOX} Foo", f"{CHECKBOX_DONE} Foo"]
+    assert node_label(Node(text="", task=Task())) == CHECKBOX
+    assert node_box_size(pending, measurer, settings)[0] == node_box_size(plain, measurer, settings)[0] + 20

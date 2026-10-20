@@ -19,6 +19,11 @@ from .model import Node
 #: `"left"` or `"right"`.
 Side = str
 
+#: What a task's label starts with when it is not done, and when it is: a ballot box, and a
+#: ballot box with a check mark (U+2610, U+2611; both in the bundled DejaVu Sans font).
+CHECKBOX = "\u2610"
+CHECKBOX_DONE = "\u2611"
+
 
 @dataclass
 class LayoutSettings:
@@ -85,9 +90,18 @@ class Plane:
         return moved
 
 
+def node_label(node: Node) -> str:
+    """What is drawn in a node's box: its text, after a checkbox if the node is a task."""
+    if node.task is None:
+        return node.text
+    box = CHECKBOX_DONE if node.task.done else CHECKBOX
+    return f"{box} {node.text}" if node.text else box
+
+
 def node_box_size(node: Node, measurer: Measurer, settings: LayoutSettings) -> tuple[float, float]:
-    """A node's own box size: its text's size, plus padding on every side."""
-    width, height = measurer.size_of(node.text)
+    """A node's own box size: its label's size (see `node_label`), plus padding on every
+    side."""
+    width, height = measurer.size_of(node_label(node))
     return (width + 2 * settings.pad_x, height + 2 * settings.pad_y)
 
 

@@ -4,7 +4,7 @@ commands that change nothing."""
 import pytest
 
 from jiyuu.editing import UNDO_LIMIT, Editor
-from jiyuu.model import Node
+from jiyuu.model import Node, Task, TaskLink
 
 Shape = tuple[str, bool, str | None, list["Shape"]]
 
@@ -263,3 +263,38 @@ def test_the_undo_stack_keeps_only_the_latest_changes() -> None:
     assert all(editor.undo() is goals for _ in range(UNDO_LIMIT))
     assert editor.undo() is None
     assert goals.folded  # the five oldest folds cannot be undone: 105 - 100 leaves it folded
+
+
+def _link(uuid: str, text: str) -> TaskLink:
+    return TaskLink(uuid=uuid, synced="20261019T211745Z", text=text, task=Task())
+
+
+def test_deleting_a_branch_orphans_its_task_links_and_undo_takes_them_back() -> None:
+    """Goals and Foo are synced tasks, Bar a task never synced: deleting Goals moves the two
+    links to the orphaned links, after the one already there; undo restores the list."""
+    root = _tree()
+    goals, foo, bar = _find(root, "Goals"), _find(root, "Foo"), _find(root, "Bar")
+    goals.task = foo.task = bar.task = Task()
+    goals.task_link, foo.task_link = _link("1", "Goals"), _link("2", "Foo")
+    orphans = [_link("0", "Old")]
+    editor = Editor(root, orphans)
+
+    editor.delete(goals)
+    assert [link.uuid for link in orphans] == ["0", "1", "2"]
+    editor.undo()
+    assert [link.uuid for link in orphans] == ["0"]
+    assert goals in root.children and goals.task_link == _link("1", "Goals")
+    editor.redo()
+    assert [link.uuid for link in orphans] == ["0", "1", "2"]
+
+
+def test_undo_puts_back_a_task_and_its_link() -> None:
+    """A node's task and link are part of what each command records."""
+    root = _tree()
+    foo = _find(root, "Foo")
+    foo.task, foo.task_link = Task(done=True), _link("2", "Foo")
+    editor = Editor(root)
+    editor.rename(foo, "Food")
+    foo.task, foo.task_link = None, None  # as a later command would leave them
+    editor.undo()
+    assert (foo.text, foo.task, foo.task_link) == ("Foo", Task(done=True), _link("2", "Foo"))
