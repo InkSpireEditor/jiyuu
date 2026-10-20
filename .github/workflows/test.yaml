@@ -20,5 +20,9 @@ jobs:
       - name: Install dependencies
         run: uv sync --locked
 
+      # The tests that run taskwarrior's `task` command are skipped without it.
+      - name: Install taskwarrior
+        run: sudo apt-get install -y taskwarrior
+
       - name: Run pytest
         run: uv run pytest --cov jiyuu --cov-report=term-missing

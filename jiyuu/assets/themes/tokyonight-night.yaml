@@ -8,6 +8,8 @@ selection: {text: "#16161e", background: "#c0caf5"}
 root: {text: "#c0caf5", background: "#292e42"}
 # Done tasks: dark5 on bg_dark, both from the "storm" palette.
 task_done: {text: "#737aa2", background: "#1f2335"}
+# Urgent tasks: red1 of the "storm" palette, which no level uses.
+urgent: {text: "#16161e", background: "#db4b4b"}
 levels:
   - {text: "#16161e", background: "#7aa2f7"}
   - {text: "#16161e", background: "#bb9af7"}

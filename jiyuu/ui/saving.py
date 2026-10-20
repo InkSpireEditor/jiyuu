@@ -7,10 +7,13 @@ it needs from the user:
   file again, dropping the changes made in the window) or "Keep mine" (write the window's
   map over the file). The file is checked every `WATCH_INTERVAL` seconds, as well as
   before each save, so the banner appears soon after the change, whether or not the map
-  was changed in the window since;
+  was changed in the window since. When the window has no unsaved change, and says that
+  nothing is being edited in it, the file is read again without asking: nothing would be
+  lost;
 - a banner when a save fails, offering "Retry";
 - a dialog asking for a file name, when the map has none yet, before the first change to it
-  is saved.
+  is saved;
+- a banner with a message of the window's own (`notify`), closed with "Close".
 
 Saves and checks run on the page's event loop, which is also where Flet calls the window's
 own event handlers, so neither runs while a change to the map is half made.
@@ -46,7 +49,9 @@ class Saving:
 
     `on_reload` is called with the map read again from disk, for the window to show it
     instead of its own. `on_done` is called when a banner or dialog that took the keyboard
-    closes, for the window to take the keyboard back.
+    closes, for the window to take the keyboard back. `on_saved` is called after each save
+    that wrote the file. `can_reload` says whether the file may be read again without
+    asking, when it changed on disk and the map has no unsaved change.
     """
 
     def __init__(
@@ -56,12 +61,17 @@ class Saving:
         theme: Theme,
         on_reload: Callable[[MindMap], None],
         on_done: Callable[[], None],
+        *,
+        on_saved: Callable[[], None] = lambda: None,
+        can_reload: Callable[[], bool] = lambda: False,
     ) -> None:
         self.page = page
         self.doc = doc
         self.theme = theme
         self.on_reload = on_reload
         self.on_done = on_done
+        self.on_saved = on_saved
+        self.can_reload = can_reload
         self.autosave = Autosave(doc, self._schedule, self._show_conflict)
         #: The banner or the file name dialog shown, if any.
         self.shown: ft.Banner | FileNameDialog | None = None
@@ -84,6 +94,9 @@ class Saving:
                 callback()
             except OSError as error:
                 self._show_banner(f"Could not save {self.doc.path}: {error}", [("Retry", self._retry)])
+                return
+            if not self.doc.dirty:
+                self.on_saved()
 
         return self.page.run_task(later).cancel
 
@@ -94,12 +107,20 @@ class Saving:
             self.check_disk()
 
     def check_disk(self) -> None:
-        """Shows the conflict banner if the map's file was changed by something else since
-        it was last read or written, and drops any save waiting to happen. Does nothing
-        while the map has no file, or the banner is already shown for it."""
+        """Reads the map's file again, or else shows the conflict banner, if the file was
+        changed by something else since it was last read or written. Read again without
+        asking when the map has no unsaved change and `can_reload` allows it, and the file
+        can be read; otherwise the banner is shown, and any save waiting to happen is
+        dropped. Does nothing while the map has no file, or the banner is already shown for
+        it."""
         if self.doc.path is None or self.doc.conflicted:
             return
         if changed_on_disk(self.doc):
+            if not self.doc.dirty and self.can_reload():
+                reload(self.doc)
+                if not changed_on_disk(self.doc):  # it was read
+                    self.on_reload(self.doc.mindmap)
+                    return
             self.doc.conflicted = True
             self.autosave.cancel()
             self._show_conflict()
@@ -109,6 +130,12 @@ class Saving:
             f"{self.doc.path} was changed outside jiyuu. Changes made here are not saved until you choose.",
             [("Reload", self._reload), ("Keep mine", self._keep_mine)],
         )
+
+    def notify(self, message: str) -> None:
+        """Shows a banner with `message` and a "Close" button, replacing any banner shown,
+        unless a dialog asking for a file name is shown."""
+        if not isinstance(self.shown, FileNameDialog):
+            self._show_banner(message, [("Close", lambda _event: self._close_shown())])
 
     def _show_banner(self, message: str, actions: list[tuple[str, Callable[[ft.Event], None]]]) -> None:
         """Shows a banner with `message` and one button per `(label, handler)`, replacing

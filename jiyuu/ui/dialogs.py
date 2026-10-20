@@ -129,10 +129,11 @@ class TaskDialog:
 
     `task` is the node's task, or `None` for a plain node. Save calls `on_chosen` with the
     task the fields describe, done or not as `task` was; "Not a task", shown only when
-    `task` is set, calls it with `None`. The due date is checked on Save: a value that is
-    not a date written `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM` is shown as an error under the
-    field, and the dialog stays open. `on_closed` is called once the dialog closes,
-    whichever way, Cancel included.
+    `task` is set, calls it with `None`. The due date typed is turned into one by
+    `resolve_due` on Save, which returns `None` for a value it cannot read: the field then
+    shows an error, and the dialog stays open. By default only a date written `YYYY-MM-DD`
+    or `YYYY-MM-DDTHH:MM` is read. `on_closed` is called once the dialog closes, whichever
+    way, Cancel included.
     """
 
     def __init__(
@@ -144,15 +145,19 @@ class TaskDialog:
         task: Task | None,
         on_chosen: Callable[[Task | None], None],
         on_closed: Callable[[], None],
+        resolve_due: Callable[[str], str | None] = lambda value: value if is_due_date(value) else None,
+        due_hint: str = "YYYY-MM-DD or YYYY-MM-DDTHH:MM",
     ) -> None:
         self.page = page
         self.task = task
+        self.resolve_due = resolve_due
+        self.due_hint = due_hint
         self.on_chosen = on_chosen
         self.on_closed = on_closed
         self.open = False
         colors = theme.root
         self.due = ft.TextField(
-            label="Due: YYYY-MM-DD or YYYY-MM-DDTHH:MM, empty for none",
+            label=f"Due: {due_hint}; empty for none",
             value=task.due if task is not None and task.due else "",
             autofocus=True,
             color=colors.text,
@@ -189,18 +194,19 @@ class TaskDialog:
         self.page.show_dialog(self.dialog)
 
     def chosen_task(self) -> Task | None:
-        """The task the fields describe, or `None` while the due date is not valid."""
-        due = (self.due.value or "").strip()
-        if due and not is_due_date(due):
+        """The task the fields describe, or `None` while the due date cannot be read."""
+        typed = (self.due.value or "").strip()
+        due = self.resolve_due(typed) if typed else None
+        if typed and due is None:
             return None
         priority = self.priority.value if self.priority.value in PRIORITIES else None
         done = self.task is not None and self.task.done
-        return Task(done=done, due=due or None, priority=priority)
+        return Task(done=done, due=due, priority=priority)
 
     def _save(self, _event: ft.Event) -> None:
         task = self.chosen_task()
         if task is None:
-            self.due.error = "not a date written YYYY-MM-DD or YYYY-MM-DDTHH:MM"
+            self.due.error = f"not a date: {self.due_hint}"
             self.page.update(self.due)
             return
         self.on_chosen(task)

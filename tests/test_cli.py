@@ -1,5 +1,6 @@
 """Tests for jiyuu's command-line entry point."""
 
+import json
 import shutil
 import tomllib
 from pathlib import Path
@@ -11,7 +12,10 @@ from jiyuu import __version__
 from jiyuu.cli import app, command_names, entry, option_names, with_default_command
 from jiyuu.formats import ink, mm
 from jiyuu.document import Document
+from jiyuu.taskwarrior import Taskwarrior, TaskwarriorError
 from jiyuu.theme import DEFAULT_THEME, Theme, load_theme
+
+from .stand_ins import FakeTaskwarrior
 
 runner = CliRunner()
 
@@ -329,7 +333,7 @@ def test_with_default_command(
 
 
 def test_command_and_option_names() -> None:
-    assert command_names() == {"version", "check", "export", "open"}
+    assert command_names() == {"version", "check", "export", "open", "task-sync"}
     assert "--help" in option_names()
 
 
@@ -393,3 +397,74 @@ def test_open_with_a_relative_path_saves_to_an_absolute_one(
     assert result.exit_code == 0
     assert [doc.path for doc in docs] == [tmp_path / "map.ink"]
     assert docs[0].path is not None and docs[0].path.is_absolute()
+
+
+TASKS_MAP = "===== ink:body\n- Project\n  - Goals\n    - [ ] Foo  due:2026-10-25 priority:H\n    - [x] Bar\n"
+
+
+def _fake_taskwarrior(monkeypatch: pytest.MonkeyPatch) -> FakeTaskwarrior:
+    tw = FakeTaskwarrior()
+    monkeypatch.setattr("jiyuu.cli.Taskwarrior", lambda: tw)
+    return tw
+
+
+def test_task_sync_creates_the_tasks_and_writes_their_links(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    tw = _fake_taskwarrior(monkeypatch)
+    path = tmp_path / "tasks.ink"
+    path.write_text(TASKS_MAP, encoding="utf-8")
+    result = runner.invoke(app, ["task-sync", str(path)])
+    assert result.exit_code == 0
+    assert "tasks: 2 created" in result.stdout and "written" in result.stdout
+    assert {task["project"] for task in tw.tasks.values()} == {"tasks"}
+    text = path.read_text(encoding="utf-8")
+    assert text.count('kind: "task"') == 2
+
+    again = runner.invoke(app, ["task-sync", str(path)])
+    assert again.exit_code == 0 and "written" not in again.stdout
+    assert path.read_text(encoding="utf-8") == text
+
+
+@pytest.mark.parametrize(
+    ("name", "content", "code"),
+    [("map.mm", "<map/>", 2), ("map.ink", "===== ink:meta\nkind: mindmap\n", 2)],
+    ids=["not a .ink file", "no map in it"],
+)
+def test_task_sync_refuses_what_it_cannot_sync(tmp_path: Path, name: str, content: str, code: int) -> None:
+    path = tmp_path / name
+    path.write_text(content, encoding="utf-8")
+    assert runner.invoke(app, ["task-sync", str(path)]).exit_code == code
+
+
+def test_task_sync_fails_without_taskwarrior_and_writes_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    tw = _fake_taskwarrior(monkeypatch)
+    tw.missing = True
+    path = tmp_path / "tasks.ink"
+    path.write_text(TASKS_MAP, encoding="utf-8")
+    result = runner.invoke(app, ["task-sync", str(path)])
+    assert result.exit_code == 1 and "cannot be run" in result.stderr
+    assert path.read_text(encoding="utf-8") == TASKS_MAP
+
+
+def test_task_sync_reports_a_failing_taskwarrior(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    tw = _fake_taskwarrior(monkeypatch)
+    tw.failing = TaskwarriorError("task import: disk full")
+    path = tmp_path / "tasks.ink"
+    path.write_text(TASKS_MAP, encoding="utf-8")
+    result = runner.invoke(app, ["task-sync", str(path)])
+    assert result.exit_code == 1 and "disk full" in result.stderr
+    assert path.read_text(encoding="utf-8") == TASKS_MAP
+
+
+@pytest.mark.skipif(shutil.which("task") is None, reason="needs taskwarrior's task command")
+def test_task_sync_with_the_real_taskwarrior(tmp_path: Path) -> None:
+    """Against `task` itself, in the test's own taskwarrior: a first sync creates the two
+    tasks, one done in taskwarrior is ticked in the file by the next."""
+    path = tmp_path / "tasks.ink"
+    path.write_text(TASKS_MAP, encoding="utf-8")
+    assert runner.invoke(app, ["task-sync", str(path)]).exit_code == 0
+    tw = Taskwarrior()
+    pending = [task for task in json.loads(tw.run(["project:tasks", "export"])) if task["status"] == "pending"]
+    assert [task["description"] for task in pending] == ["Foo"]
+    tw.run([pending[0]["uuid"], "done"])
+    assert runner.invoke(app, ["task-sync", str(path)]).exit_code == 0
+    assert "    - [x] Foo  due:2026-10-25 priority:H\n" in path.read_text(encoding="utf-8")

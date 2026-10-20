@@ -9,6 +9,8 @@ selection: {text: "#002b36", background: "#eee8d5"}
 root: {text: "#eee8d5", background: "#073642"}
 # Done tasks: base0 on base02.
 task_done: {text: "#839496", background: "#073642"}
+# Urgent tasks: base3 on red.
+urgent: {text: "#fdf6e3", background: "#dc322f"}
 levels:
   - {text: "#002b36", background: "#b58900"}
   - {text: "#fdf6e3", background: "#cb4b16"}

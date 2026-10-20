@@ -43,6 +43,7 @@ jiyuu path/to/map.ink                                # open a map; same as `jiyu
 jiyuu path/to/map.mm --theme solarized-dark          # in another colour theme
 jiyuu check path/to/map.ink                          # list problems; fails on an error
 jiyuu export --mm path/to/map.ink path/to/map.mm     # write a Freeplane .mm file
+jiyuu task-sync path/to/map.ink                      # sync its tasks with taskwarrior
 ```
 
 A file whose name is also a command's, such as `check`, is opened with `jiyuu ./check`.
@@ -93,19 +94,67 @@ saved to that copy. If the copy already exists, it may hold changes made the las
 `.mm` was opened, so it is left untouched, and at the first change the window asks for the
 name of a new file instead.
 
-If another program changes the file while the map is open, a banner appears within about a
-second, and nothing more is saved until you choose to reload the file, dropping the window's
-unsaved changes, or to keep the window's version, writing it over the file.
+If another program changes the file while the map is open, the window reads it again within
+about a second, if it has no unsaved change and no text or task dialog is open; the node
+selected stays selected. Otherwise a banner appears, and nothing more is saved until you
+choose to reload the file, dropping the window's unsaved changes, or to keep the window's
+version, writing it over the file.
 
 The File menu above the map exports it as a Freeplane `.mm` file, to a new file whose name
 you type; an existing file is never written over. `jiyuu export` does the same from the
 command line, and replaces an existing file only with `--overwrite`.
 
+## Tasks and taskwarrior
+
+A node becomes a task with Ctrl+T, which also sets its due date and its priority (H, M or
+L). The due date is typed as `2026-10-25` or `2026-10-25T14:00`, or as anything
+[taskwarrior](https://taskwarrior.org) understands, such as `tomorrow`, `friday` or `eow`,
+which is turned into a date when the dialog is saved. Ctrl+D, or a click on the checkbox,
+ticks a task done.
+
+Each task is kept as a task in taskwarrior 2.6 or later, so that `task` and taskwarrior-tui
+list it, with the map's file name as its project: `task project:map list` lists the tasks of
+`map.ink`. Each task also records the map's full path in an attribute `jiyuumap`. An open
+window syncs its map with taskwarrior after each save and every minute;
+`jiyuu task-sync map.ink` does the same for a map that is not open, and can be run from
+cron:
+
+```
+*/10 * * * * jiyuu task-sync /home/me/maps/map.ink
+```
+
+What a sync does:
+
+| Change | In the other place |
+|---|---|
+| A node made a task | The task is created in taskwarrior |
+| A task's text, due date or priority changed in the map | Changed in taskwarrior |
+| The same changed in taskwarrior (`task modify`, taskwarrior-tui) | Changed in the map |
+| Changed in both since the last sync | The later change is kept |
+| Ticked done in the map | Completed in taskwarrior, as `task done` |
+| Completed in taskwarrior | Ticked done in the map, drawn greyed and struck through |
+| Unticked in either | Pending again in the other |
+| A task node deleted in the map, or made a plain node | Deleted in taskwarrior, as `task delete` |
+| Deleted in taskwarrior | The node, and its branch, deleted from the map |
+
+A sync changes only what the map sets in a task: its description, status, due date, priority,
+project and `jiyuumap`. Tags, annotations and anything else added in taskwarrior are kept. A
+task created in taskwarrior is not added to any map.
+
+A task that taskwarrior finds urgent is drawn in red: one whose urgency is at least 9, the
+urgency taskwarrior gives a task due today with no priority, or the value set with
+`task config jiyuu.urgent 12`. The window reads that value when it opens.
+
+A task is matched to its taskwarrior task through the `nodes` section of the map's file (see
+below). A task renamed or moved in a text editor is matched again if its text is unchanged;
+renamed by hand, it becomes a new task in taskwarrior at the next sync, and its old task is
+deleted. Renaming it in the window, or in taskwarrior, keeps the same task.
+
 ## The `.ink` format
 
 An `.ink` map is plain text, readable and editable in any text editor: a `meta` section, the
 tree as an indented list, then a `nodes` section recording which side of the root each branch
-is drawn on and which nodes are folded.
+is drawn on, which nodes are folded, and which taskwarrior task each task is kept in.
 
 ```
 ===== ink:meta

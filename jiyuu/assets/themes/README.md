@@ -12,8 +12,8 @@ from these palettes, used under their own licences:
 | `solarized-dark.yaml` | Solarized, dark | https://github.com/altercation/solarized | MIT |
 
 Which palette colour is used for which part of a map (canvas, edges, root, each depth level,
-selection, tasks that are done) is jiyuu's own choice; each file's header comment notes where it departs from the
-palette's obvious choice and why.
+selection, tasks that are done, urgent tasks) is jiyuu's own choice; each file's header
+comment notes where it departs from the palette's obvious choice and why.
 
 ## Format
 
@@ -25,6 +25,8 @@ edge: "#d8dee9"            # edges, and node borders
 selection: {text: "#2e3440", background: "#ebcb8b"}
 root: {text: "#eceff4", background: "#4c566a"}
 task_done: {text: "#8a94a8", background: "#3b4252"}  # a task that is done, at any depth
+urgent: {text: "#eceff4", background: "#bf616a"}     # a task taskwarrior finds urgent; its
+                                                     # border is drawn in its text colour
 levels:                    # depth 1, 2, 3, ...; cycles back to the first after the last
   - {text: "#2e3440", background: "#8fbcbb"}
 ```

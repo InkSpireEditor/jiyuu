@@ -3,8 +3,9 @@
 A theme names a colour for each part of a drawn map: the canvas behind it, its edges (also
 used for node borders), the selected node, the root, one text/background pair per depth
 level below the root, reused from the first once a map is deeper than the theme has levels
-for, and a pair for tasks that are done. Themes live in files rather than in code so that one can be changed, or a new one
-written, without touching anything else; `jiyuu/assets/themes/README.md` describes the
+for, a pair for tasks that are done, and a pair for tasks that taskwarrior finds urgent.
+Themes live in files rather than in code so that one can be changed, or a new one written,
+without touching anything else; `jiyuu/assets/themes/README.md` describes the
 format and where each bundled theme's colours come from.
 
 `contrast_ratio` computes the WCAG 2 contrast ratio between two colours
@@ -58,6 +59,8 @@ class Theme:
     levels: tuple[Colors, ...]
     #: A task that is done, at any depth.
     task_done: Colors
+    #: A task that is urgent, at any depth. Its border is drawn in the text colour.
+    urgent: Colors
 
     def for_depth(self, depth: int) -> Colors:
         """The colours for a node `depth` levels below the root (`0` is the root itself)."""
@@ -138,4 +141,5 @@ def load_theme(name_or_path: str) -> Theme:
             _pair({f"levels[{i}]": level}, f"levels[{i}]", source) for i, level in enumerate(levels)
         ),
         task_done=_pair(data, "task_done", source),
+        urgent=_pair(data, "urgent", source),
     )

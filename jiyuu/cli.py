@@ -10,6 +10,7 @@ nor an existing file, the help is printed.
 
 import sys
 from collections.abc import Collection
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
@@ -18,8 +19,9 @@ import typer.core
 import typer.main
 
 from . import __version__
-from . import document
+from . import document, tasksync
 from .formats import describe, ink, mm, read_map, write_text_atomically
+from .taskwarrior import Taskwarrior, TaskwarriorError
 from .theme import DEFAULT_THEME, ThemeError, available_themes, load_theme
 
 #: Markdown, so that the lines of one paragraph of a docstring are joined in the help, and
@@ -141,6 +143,47 @@ def open_map(
     written = document.close(doc)
     if written is not None:
         print(f"{written}: changes saved", file=sys.stderr)
+
+
+@app.command("task-sync")
+def task_sync(path: Path) -> None:
+    """Sync the tasks of the map in `path`, a `.ink` file, with taskwarrior.
+
+    Tasks made in the map are created in taskwarrior; changes made on either side since the
+    last sync are copied to the other, the later one winning when a task changed on both
+    (see `jiyuu.tasksync`). The map's time is the time its file was last written. The file
+    is written only if the sync changed the map, and not if something else changed it in the
+    meantime. Prints what was done.
+
+    Exits with status 1 if taskwarrior cannot be run or fails, or the file changed during
+    the sync; with status 2 if `path` is not a `.ink` file or cannot be read into a map.
+    Suited to running from cron: it asks nothing.
+    """
+    if path.suffix != ink.SUFFIX:
+        print(f"{path}: task-sync takes a {ink.SUFFIX} file", file=sys.stderr)
+        raise typer.Exit(code=2)
+    doc, problems = document.open_document(path.absolute())
+    for problem in problems:
+        print(describe(path, problem), file=sys.stderr)
+    if doc is None or doc.path is None:
+        raise typer.Exit(code=2)
+    taskwarrior = Taskwarrior()
+    if not taskwarrior.available():
+        print("taskwarrior's `task` command (2.6 or later) cannot be run", file=sys.stderr)
+        raise typer.Exit(code=1)
+    map_time = datetime.fromtimestamp(doc.path.stat().st_mtime, UTC)
+    try:
+        result = tasksync.sync(doc.mindmap, taskwarrior, doc.path, map_time)
+    except TaskwarriorError as error:
+        print(error, file=sys.stderr)
+        raise typer.Exit(code=1) from error
+    print(result.summary())
+    if result.changed:
+        document.save(doc)
+        if doc.conflicted:
+            print(f"{path}: changed during the sync, not written; run task-sync again", file=sys.stderr)
+            raise typer.Exit(code=1)
+        print(f"{path}: written")
 
 
 def command_names() -> set[str]:

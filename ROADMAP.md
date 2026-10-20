@@ -83,6 +83,8 @@ Status values: `todo`, `in progress`, `done`, `blocked: <reason>`.
 | The window pans and zooms by setting the map's `left`/`top`/`scale` from a `jiyuu.view.View`, not with `InteractiveViewer` | `InteractiveViewer` can only zoom around its content's top-left corner, so zooming around the pointer took two calls and jittered; found by hand in step 5 |
 | Version 1.0.0 in `pyproject.toml`, git tag `v1.0`; `jiyuu.__version__` read from the package metadata (step 18) | The user's choice of names; one place to write the number |
 | Tasks are synced with taskwarrior through its command line (`task import`, `task export`), never its database (steps 19–21) | The command line's JSON is the same in taskwarrior 2.6 and 3.x, while the database changed from text files to SQLite in 3.0; the other choices for tasks are in the table before step 19 |
+| A new task's uuid is derived from the map's path and the node's id (step 21) | A sync whose map is not saved afterwards would otherwise create the task again at the next sync |
+| Tests run with `TASKRC`/`TASKDATA` in their own folder and in `Europe/Paris` time (step 21) | No test may read or write the user's taskwarrior; due dates convert between local time and UTC |
 
 ## The `.ink` map file
 
@@ -2230,7 +2232,7 @@ text; the uuid and `synced` are made up):
 
 ### Step 20: Tasks in the window
 
-- [x] Status: `done`
+- [x] Status: `done (cd9f074)`
 - Depends on: 19.
 - Swapped with the taskwarrior step at the user's request, after step 19: with only step 19
   built, a task could be made only by editing the file by hand. This step needs nothing
@@ -2270,61 +2272,92 @@ text; the uuid and `synced` are made up):
 
 ### Step 21: Taskwarrior
 
-- [ ] Status: `todo`
+- [x] Status: `done`, apart from CI with taskwarrior 2.6 on Ubuntu, which runs once pushed
 - Depends on: 20.
 - Tasks:
-  - [ ] `jiyuu/taskwarrior.py`, `Taskwarrior`: runs `task rc.confirmation=off
+  - [x] `jiyuu/taskwarrior.py`, `Taskwarrior`: runs `task rc.confirmation=off
         rc.verbose=nothing rc.json.array=on …` as a subprocess and never reads
-        taskwarrior's database itself; honours `TASKRC` and `TASKDATA`. `available()`
-        (`task --version`, 2.6 or later), `export(uuids)` (every status), `import_(tasks)`
-        (one `task import`, which creates or updates by uuid), `calc(expression)`,
-        `get(name)` (`task _get rc.<name>`). Taskwarrior's UTC dates (`20261025T000000Z`)
-        are converted to local ISO dates and back; a local midnight is stored as a date
-        alone, another time to the minute. `calc` raises on output that is not an ISO date
-        and time. See "Taskwarrior's behaviour, measured before step 19" above.
-  - [ ] `jiyuu/tasksync.py`, `sync(mindmap, project, tw, now) -> SyncReport`: a task with
-        no link gets a new uuid4 and is created; a linked task changed only in the map
-        sends the map's values, changed only in taskwarrior (`modified` later than
-        `synced`) copies description, due, priority and status into the node, changed in
-        both takes the later change (the map's time is its last save, or the file's mtime
-        for a hand edit); done ↔ `completed`, unticked ↔ `pending`; `deleted` in
-        taskwarrior deletes the node and its branch; an orphaned link, or a link on a node
-        that is no longer a task, is sent as `deleted` and dropped. `project` is the map's
-        file stem, `jiyuumap` its absolute path, `description` the node's text. One `task
-        export` of every linked uuid, then one `task import` of taskwarrior's JSON with
-        jiyuu's fields changed (nothing else is removed), then one more export: every link
-        gets `synced` = that task's `modified`. The report counts what was created,
-        updated, completed, deleted and copied back, and gives each task's `urgency`.
-  - [ ] `jiyuu task-sync <file>`: opens the map, syncs, saves through `document.save` (so
-        a file changed meanwhile is not written over) only when something changed, prints
-        the report. Exit status 0, 1 when taskwarrior is missing or fails, 2 for an
-        unreadable file; a `.mm` file is refused.
-  - [ ] The window syncs after each save and every 60 s, in a worker thread on a copy of
-        the task values, and applies the result on the event loop thread; a result for a
-        map changed meanwhile is dropped and the sync runs again. Without taskwarrior, a
-        banner says so once and nothing is synced.
-  - [ ] Nodes with `urgency` ≥ `rc.jiyuu.urgent` (9 when unset) are drawn urgent: a border
-        and background in a new theme colour pair `urgent`, in every bundled theme and the
-        themes' README (moved here from step 19).
-  - [ ] The task dialog's due field also takes anything `task calc` accepts (`tomorrow`,
-        `friday`), resolved on Save, when taskwarrior is installed.
-  - [ ] An outside change to the file while the document has no unsaved changes and no text
-        is being edited is reloaded without the banner, keeping the selection by node id
-        where it still exists.
-  - [ ] CI installs taskwarrior (`apt-get install taskwarrior`, 2.6 on Ubuntu). If its
-        import or export differs from 3.5's, the tests that run `task` are skipped in CI,
-        and that is written here.
-  - [ ] README: a Tasks section (what each change does in taskwarrior, `task-sync` with a
-        cron line, `jiyuu.urgent`, a node renamed by hand becoming a new task).
-- Tests: `tests/test_tasksync.py` with a stand-in `Taskwarrior`: every row of the table
-  above, the later change winning in both directions, no write when nothing changed;
-  `tests/test_taskwarrior.py` against the real `task` with `TASKDATA` and `TASKRC` in
-  `tmp_path` (skipped without `task`), and a check that no test can reach `~/.task`;
-  `tests/test_ui.py`: a sync result applied to the window, the urgent style, a `task calc`
-  due date in the dialog, the silent reload and the banner when there are unsaved changes.
+        taskwarrior's database itself; honours `TASKRC` and `TASKDATA`. `available()`,
+        `export(uuids)` (every status), `import_tasks(tasks)` (one `task import`),
+        `calc(expression)`, `get(name)`. As built: the version is asked with `task
+        _version` (it prints `3.5.0 (3419d5ba1)`), since `task --version` exits with status
+        1 when configuration overrides come before it, found when the module was first
+        run; the input is closed when nothing is sent, and without a taskrc `task` then
+        exits with "Cannot proceed without rc file" instead of asking a question;
+        `from_taskwarrior_date`, `to_taskwarrior_date`, `local_due`.
+  - [x] `jiyuu/tasksync.py`: `snapshot`, `run_sync`, `apply`, `sync`, `urgent_threshold`,
+        `SyncResult` (with `summary()`). As built, beyond the plan:
+        - A new task's uuid is `uuid5` of the map's path and the node's id, not `uuid4`: if
+          the map is not saved after a sync (a crash, or a conflict for `task-sync`), the
+          next sync finds the same task, merges with it, and creates nothing.
+        - A task changed in taskwarrior is detected with `modified` ≥ the link's `synced`,
+          not >: `modified` counts whole seconds, and a scratchpad run end to end missed
+          `task done` and `task modify` made in the same second as the previous sync.
+          Copying values that did not change changes nothing.
+        - Every task, changed or not, is imported each sync (taskwarrior skips the
+          unchanged ones, checked again on 2026-10-20 with an exported task holding a tag
+          and an annotation), so a map moved on disk updates `project` and `jiyuumap`.
+        - A due date that already means the node's due date is kept as taskwarrior wrote
+          it, so that a time with seconds set in taskwarrior (`eow` is 23:59:59) is not
+          rewritten to the minute at every sync.
+        - A node made plain whose task was deleted in taskwarrior is not deleted from the
+          map: only task nodes are.
+  - [x] `jiyuu task-sync <file>`: as planned; prints `SyncResult.summary()` and, if the
+        file was written, `<path>: written`.
+  - [x] The window syncs after each save (`Saving(on_saved=…)`) and every 60 s, the first
+        sync straight away (`jiyuu/ui/tasks.py`, `WindowSync`), in a worker thread
+        (`asyncio.to_thread`) on a `tasksync.snapshot`; a result for a map changed
+        meanwhile (`Editor.version`) is dropped and the sync runs again. Without
+        taskwarrior, a banner says so once (`Saving.notify`); a failing sync is reported
+        once per message. A map with no task and no link is not synced. Changes a sync
+        brings are not in the undo history.
+  - [x] Urgent tasks: `rc.jiyuu.urgent`, 9 when unset or not a number; theme pair
+        `urgent` in every bundled theme and the themes' README; drawn with the urgent
+        colours and a 3-pixel border in the urgent text colour, which stays while the task
+        is selected; a task ticked done is no longer drawn urgent.
+  - [x] The task dialog's due field takes anything `task calc` accepts, resolved on Save
+        (`WindowSync.resolve_due`, passed to `TaskDialog(resolve_due=…)`).
+  - [x] Reloading without the banner (`Saving(can_reload=…)`): when the document has no
+        unsaved change and no text field or task dialog is open; the selection is kept
+        by node id; a file that no longer reads as a map still shows the banner. Found
+        while doing it: `reload` replaces the document's map before the window is told, so
+        the window now finds the old selection in its editor's tree.
+  - [x] CI installs taskwarrior (`apt-get install taskwarrior`). Not run yet: it runs once
+        the repository is pushed. If taskwarrior 2.6's import or export differs from
+        3.5's, the tests that run `task` fail there, and that is to be written here.
+  - [x] README: a "Tasks and taskwarrior" section (what each change does, `task-sync` with
+        a cron line, `jiyuu.urgent`, a node renamed by hand becoming a new task), and the
+        reload without a banner under Saving.
+- Tests:
+  - [x] `tests/conftest.py`: every test runs with `TASKRC` and `TASKDATA` in its own
+        temporary folder (an empty taskrc), and in the time zone `Europe/Paris`. Added
+        after a window test ran the real `task calc` with the user's own `~/.taskrc`
+        (read only: `taskchampion.sqlite3` was last modified on 2026-10-19, before the
+        tests ran, and its write-ahead log was empty). `test_taskwarrior.py` checks the
+        variables point into the test's folder.
+  - [x] `tests/stand_ins.py`, `FakeTaskwarrior`: import and export as measured.
+  - [x] `tests/test_tasksync.py` (30 tests): every row of the table above, the later change
+        winning in both directions, the same-second change, a map not saved after a sync,
+        tags kept, a moved map, urgency, a failing taskwarrior, `apply` on a node gone.
+  - [x] `tests/test_taskwarrior.py`: date conversions across the 2026-10-25 change to
+        winter time, versions, a missing command; against the real `task` (skipped
+        without it): import and export, a whole-task import and a skipped one, `calc`,
+        `get`, a failing import.
+  - [x] `tests/test_cli.py`: `task-sync` creating and then writing nothing, refusing a
+        `.mm` and an unreadable file, without taskwarrior, with a failing one, and against
+        the real `task`.
+  - [x] `tests/test_ui.py`: the first sync, the urgent style selected and not, a task done
+        not urgent, a change and a deletion from taskwarrior, a result dropped and run
+        again, no taskwarrior, a failing sync, no task, a save asking for a sync, a sync
+        asked for while one runs, `task calc` in the dialog, the reload without a banner,
+        and the banner in its four other cases.
 - Done when: the tests pass, and the user runs `jiyuu task-sync` on a copy of a map and
   sees its tasks in `task project:<name> list` and taskwarrior-tui; marks one done there and
   sees it greyed in the open window within 60 s; and sees a task due today drawn red.
+  **Met** (hand check by the user, 2026-10-20, with `TASKRC`/`TASKDATA` in the scratchpad):
+  changes to existing tasks in the window reach taskwarrior after the save; a task made in
+  the window reaches it without `task-sync`; a task done in taskwarrior reaches the open
+  window at the next sync; a task added in taskwarrior reaches no map, as intended.
 
 ## Later (not scheduled)
 

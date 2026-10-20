@@ -24,6 +24,7 @@ edge: "#ffffff"
 selection: {text: "#000000", background: "#ffffff"}
 root: {text: "#ffffff", background: "#000000"}
 task_done: {text: "#888888", background: "#000000"}
+urgent: {text: "#ffffff", background: "#cc0000"}
 levels:
   - {text: "#000000", background: "#ffffff"}
   - {text: "#ffffff", background: "#000000"}
@@ -53,7 +54,7 @@ def test_every_bundled_theme_is_readable(name: str) -> None:
     """Every text colour in a bundled theme contrasts with its background by at least the
     floor, and so does its edge colour with its canvas."""
     theme = load_theme(name)
-    pairs = [("root", theme.root), ("selection", theme.selection), ("task_done", theme.task_done)] + [
+    pairs = [("root", theme.root), ("selection", theme.selection), ("task_done", theme.task_done), ("urgent", theme.urgent)] + [
         (f"levels[{i}]", level) for i, level in enumerate(theme.levels)
     ]
     for label, pair in pairs:

@@ -4,7 +4,8 @@ Three canvases are stacked, bottom to top: one holding every edge as a cubic Bé
 one holding every node's box (a filled rounded rectangle, its border, and its label centred
 on it), and one holding every fold marker (a circle, and the count it shows). Every colour
 comes from the `Theme` passed in. A task that is done is drawn in the theme's `task_done`
-colours, its label struck through.
+colours, its label struck through; a task in `MapDrawing.urgent` in its `urgent` colours,
+with a wider border in the urgent text colour, which stays while the task is selected.
 
 Shapes rather than one widget per node: Flutter rebuilds every widget under the drawing
 surface each time the surface moves, so on a map of several hundred nodes a pan or zoom
@@ -46,6 +47,7 @@ MARKER_GAP = 2.0
 MARKER_FONT_SIZE = 10
 CORNER_RADIUS = 6
 BORDER_WIDTH = 1
+URGENT_BORDER_WIDTH = 3
 EDGE_WIDTH = 2
 
 
@@ -85,6 +87,23 @@ class _BoxShapes:
     text: cv.Text
 
 
+@dataclass(frozen=True)
+class _Paints:
+    """The paints and text style that do not depend on a node's colours: edges, a box's
+    border, an urgent task's border, a fold marker's circle and its count."""
+
+    edge: ft.Paint
+    border: ft.Paint
+    urgent_border: ft.Paint
+    marker: ft.Paint
+    count: ft.TextStyle
+
+
+def _stroke(color: str, width: float) -> ft.Paint:
+    """An outline `width` pixels wide, in `color`."""
+    return ft.Paint(color=color, style=ft.PaintingStyle.STROKE, stroke_width=width)
+
+
 @dataclass
 class _MarkerShapes:
     """The shapes one node's fold marker is drawn with."""
@@ -120,10 +139,15 @@ class MapDrawing:
         #: The visible nodes' boxes, and the visible fold markers' centres, as last drawn.
         self._rects: dict[Node, Rect] = {}
         self._marker_centres: dict[Node, tuple[float, float]] = {}
-        self._edge_paint = self._stroke(EDGE_WIDTH)
-        self._border_paint = self._stroke(BORDER_WIDTH)
-        self._marker_paint = ft.Paint(color=theme.edge)
-        self._count_style = ft.TextStyle(font_family=FONT_FAMILY, size=MARKER_FONT_SIZE, color=theme.canvas)
+        self._paints = _Paints(
+            edge=_stroke(theme.edge, EDGE_WIDTH),
+            border=_stroke(theme.edge, BORDER_WIDTH),
+            urgent_border=_stroke(theme.urgent.text, URGENT_BORDER_WIDTH),
+            marker=ft.Paint(color=theme.edge),
+            count=ft.TextStyle(font_family=FONT_FAMILY, size=MARKER_FONT_SIZE, color=theme.canvas),
+        )
+        #: The task nodes drawn as urgent; set by the window, used from the next `draw`.
+        self.urgent: set[Node] = set()
         #: Box fills by colour, and text styles by colour and whether they strike the text
         #: through, each made the first time it is used.
         self._fills: dict[str, ft.Paint] = {}
@@ -218,7 +242,7 @@ class MapDrawing:
         elements = edge_elements(edge, rects, self.settings)
         path = self._paths.get(edge.child)
         if path is None:
-            path = self._paths[edge.child] = cv.Path(elements, paint=self._edge_paint)
+            path = self._paths[edge.child] = cv.Path(elements, paint=self._paints.edge)
             self._edge_list.append(path)
         path.elements = elements
 
@@ -228,7 +252,7 @@ class MapDrawing:
         if box is None:
             box = self._box_shapes[node] = _BoxShapes(
                 fill=cv.Rect(0, 0, 0, 0, border_radius=CORNER_RADIUS),
-                border=cv.Rect(0, 0, 0, 0, border_radius=CORNER_RADIUS, paint=self._border_paint),
+                border=cv.Rect(0, 0, 0, 0, border_radius=CORNER_RADIUS, paint=self._paints.border),
                 text=cv.Text(0, 0, alignment=ft.Alignment.CENTER),
             )
             self._box_list.extend(_shapes_of(box))
@@ -236,6 +260,7 @@ class MapDrawing:
             shape.x, shape.y, shape.width, shape.height = rect.x, rect.y, rect.width, rect.height
         box.text.x, box.text.y = rect.x + rect.width / 2, rect.y + rect.height / 2
         box.text.value = node_label(node)
+        box.border.paint = self._paints.urgent_border if self._is_urgent(node) else self._paints.border
         self._colour(node, self._colors_of(node, selected))
 
     def _draw_marker(self, node: Node, rect: Rect, side: str) -> None:
@@ -247,8 +272,8 @@ class MapDrawing:
         marker = self._marker_shapes.get(node)
         if marker is None:
             marker = self._marker_shapes[node] = _MarkerShapes(
-                circle=cv.Circle(0, 0, 0, paint=self._marker_paint),
-                count=cv.Text(0, 0, alignment=ft.Alignment.CENTER, style=self._count_style),
+                circle=cv.Circle(0, 0, 0, paint=self._paints.marker),
+                count=cv.Text(0, 0, alignment=ft.Alignment.CENTER, style=self._paints.count),
             )
             self._marker_list.extend(_shapes_of(marker))
         centre = self._marker_centres[node] = marker_centre(rect, side)
@@ -259,12 +284,20 @@ class MapDrawing:
 
     def _colors_of(self, node: Node, selected: bool) -> Colors:
         """The colours `node`'s box is drawn in: the selection's if it is selected, else the
-        theme's `task_done` if it is a task that is done, else its depth's."""
+        theme's `task_done` if it is a task that is done, else its `urgent` if it is
+        urgent (see `_is_urgent`), else its depth's."""
         if selected:
             return self.theme.selection
         if node.task is not None and node.task.done:
             return self.theme.task_done
+        if self._is_urgent(node):
+            return self.theme.urgent
         return self.theme.for_depth(self._depths[node])
+
+    def _is_urgent(self, node: Node) -> bool:
+        """Whether `node` is drawn as urgent: it is in `urgent`, and is a task not done. A
+        task ticked done since `urgent` was set is not."""
+        return node in self.urgent and node.task is not None and not node.task.done
 
     def _colour(self, node: Node, colors: Colors) -> list[cv.Shape]:
         """Sets `node`'s box fill and text colour from `colors`, its text struck through if
@@ -285,9 +318,6 @@ class MapDrawing:
         box.fill.paint, box.text.style = fill, style
         return [box.fill, box.text]
 
-    def _stroke(self, width: float) -> ft.Paint:
-        """An outline `width` pixels wide, in the theme's edge colour."""
-        return ft.Paint(color=self.theme.edge, style=ft.PaintingStyle.STROKE, stroke_width=width)
 
 
 def _shapes_of(kept: cv.Path | _BoxShapes | _MarkerShapes) -> list[cv.Shape]:

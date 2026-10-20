@@ -3,6 +3,7 @@ shapes a map is drawn with, in which colours, and what a click or a key does."""
 
 import asyncio
 from collections.abc import Callable, Coroutine
+from datetime import datetime
 from pathlib import Path
 from typing import cast
 
@@ -14,12 +15,16 @@ from jiyuu.document import Document, open_document
 from jiyuu.formats import mm
 from jiyuu.layout import CHECKBOX, CHECKBOX_DONE, LayoutSettings, Plane, layout
 from jiyuu.measure import FixedMeasurer
-from jiyuu.model import MindMap, Node, Task
+from jiyuu import tasksync
+from jiyuu.model import MindMap, Node, Task, TaskLink
 from jiyuu.theme import load_theme
 from jiyuu.ui.dialogs import FileNameDialog, TaskDialog
 from jiyuu.ui.export import ask_export
 from jiyuu.ui.app import MIN_FIELD_WIDTH, MapLayer, MapWindow, TextEdit, typed_character
 from jiyuu.ui.canvas import MapDrawing, marker_centre
+from jiyuu.taskwarrior import Taskwarrior, TaskwarriorError
+
+from .stand_ins import FakeTaskwarrior
 
 MEASURER = FixedMeasurer(width_per_char=10.0, height=16.0)
 SETTINGS = LayoutSettings()
@@ -283,7 +288,7 @@ def _window(root: Node, path: Path = Path("map.ink")) -> tuple[MapWindow, _Page]
     made unless a test runs one itself."""
     page = _Page()
     doc = Document(source=path, path=path, mindmap=MindMap(root=root), last_io_hash=b"")
-    window = MapWindow(cast(ft.Page, page), doc, THEME)
+    window = MapWindow(cast(ft.Page, page), doc, THEME, cast(Taskwarrior, FakeTaskwarrior()))
     window.control()
     window.redraw()
     window.window_size = (800.0, 600.0)
@@ -797,7 +802,7 @@ def _ink_window(tmp_path: Path) -> tuple[MapWindow, _Page, Path]:
     doc, _ = open_document(path)
     assert doc is not None
     page = _Page()
-    window = MapWindow(cast(ft.Page, page), doc, THEME)
+    window = MapWindow(cast(ft.Page, page), doc, THEME, cast(Taskwarrior, FakeTaskwarrior()))
     window.control()
     window.redraw()
     window.window_size = (800.0, 600.0)
@@ -874,7 +879,7 @@ def test_a_map_with_no_file_asks_for_a_name_at_its_first_change(tmp_path: Path) 
     doc, _ = open_document(source)
     assert doc is not None and doc.path is None
     page = _Page()
-    window = MapWindow(cast(ft.Page, page), doc, THEME)
+    window = MapWindow(cast(ft.Page, page), doc, THEME, cast(Taskwarrior, FakeTaskwarrior()))
     window.control()
     window.redraw()
     _press(window, "Insert")
@@ -920,21 +925,50 @@ def test_a_save_that_fails_shows_a_banner_offering_to_retry(
     assert path.read_text(encoding="utf-8").count("  - ") == 3
 
 
-def test_a_file_changed_on_disk_shows_the_banner_without_a_change_in_the_window(tmp_path: Path) -> None:
-    """The check made every second finds the change; nothing was edited in the window. A
-    second check while the banner is shown shows nothing more."""
+def test_a_file_changed_on_disk_is_read_again_when_the_window_has_no_unsaved_change(tmp_path: Path) -> None:
+    """The check made every second finds the change; nothing was edited in the window, so
+    the file is read again with no banner, the node selected stays selected, and a sync is
+    asked for."""
     window, page, path = _ink_window(tmp_path)
+    window.select(window.mindmap.root.children[1])  # Risks
     window.saving.check_disk()
     assert page.dialogs == []
 
-    path.write_text("- Edited elsewhere\n", encoding="utf-8")
+    path.write_text("- Project\n  - Goals\n  - Risks\n    - Foo\n", encoding="utf-8")
+    window.saving.check_disk()
+    assert page.dialogs == [] and not window.saving.doc.conflicted
+    assert [child.text for child in window.mindmap.root.children[1].children] == ["Foo"]
+    assert window.selected is window.mindmap.root.children[1]
+    assert page.handlers()[-1] == window.tasks._sync  # pylint: disable=protected-access
+
+
+@pytest.mark.parametrize("busy", ["unsaved change", "text field", "task dialog", "unreadable"])
+def test_a_file_changed_on_disk_shows_the_banner_when_it_cannot_be_read_again_quietly(
+    tmp_path: Path, busy: str
+) -> None:
+    """With an unsaved change, a text field or a task dialog open, or a file that no longer
+    reads as a map, the banner is shown instead; a second check shows nothing more."""
+    window, page, path = _ink_window(tmp_path)
+    if busy == "unsaved change":
+        window.saving.doc.dirty = True
+    elif busy == "text field":
+        window.start_editing(window.mindmap.root)
+    elif busy == "task dialog":
+        window.ask_task(window.mindmap.root.children[0])
+    path.write_text("===== ink:body\n" if busy == "unreadable" else "- Edited elsewhere\n", encoding="utf-8")
     window.saving.check_disk()
     window.saving.check_disk()
-    (banner,) = page.dialogs
-    assert isinstance(banner, ft.Banner)
+    banner = page.dialogs[-1]
+    assert isinstance(banner, ft.Banner) and len(page.dialogs) == (2 if busy == "task dialog" else 1)
     assert window.saving.doc.conflicted
 
-    _click_button(banner, "Reload")
+
+def test_reload_from_the_banner_reads_the_file_again(tmp_path: Path) -> None:
+    window, page, path = _ink_window(tmp_path)
+    window.saving.doc.dirty = True
+    path.write_text("- Edited elsewhere\n", encoding="utf-8")
+    window.saving.check_disk()
+    _click_button(page.dialogs[-1], "Reload")
     assert window.mindmap.root.text == "Edited elsewhere"
 
 
@@ -1112,3 +1146,158 @@ def test_ctrl_d_on_a_plain_node_does_nothing() -> None:
     updates = len(page.updates)
     _press_with(window, ["Control Left"], "D")
     assert goals.task is None and len(page.updates) == updates
+
+
+def _task_window(tmp_path: Path) -> tuple[MapWindow, _Page, Path, FakeTaskwarrior]:
+    """A window over a `.ink` file whose Goals holds the task Foo, with a stand-in
+    taskwarrior."""
+    path = tmp_path / "map.ink"
+    path.write_text("- Project\n  - Goals\n    - [ ] Foo\n  - Risks\n", encoding="utf-8")
+    doc, _ = open_document(path)
+    assert doc is not None
+    page, tw = _Page(), FakeTaskwarrior()
+    window = MapWindow(cast(ft.Page, page), doc, THEME, cast(Taskwarrior, tw))
+    window.control()
+    window.redraw()
+    window.window_size = (800.0, 600.0)
+    return window, page, path, tw
+
+
+def _foo(window: MapWindow) -> Node:
+    return window.mindmap.root.children[0].children[0]
+
+
+def _run_sync(window: MapWindow) -> None:
+    asyncio.run(window.tasks._sync())  # pylint: disable=protected-access
+
+
+def test_the_window_syncs_its_tasks_and_draws_an_urgent_one(tmp_path: Path) -> None:
+    """The first sync links Foo, asks for a save, and draws Foo urgent once taskwarrior
+    gives it an urgency of at least 9."""
+    window, page, _, tw = _task_window(tmp_path)
+    assert page.handlers()[-1] == window.tasks._every_interval  # pylint: disable=protected-access
+    _run_sync(window)
+    foo = _foo(window)
+    assert foo.task_link is not None and window.drawing.urgent == set()
+    assert any(getattr(handler, "__name__", "") == "later" for handler in page.handlers())
+
+    tw.urgency[foo.task_link.uuid] = 9.2
+    _run_sync(window)
+    assert window.drawing.urgent == {foo}
+    fill, border, _ = _box(window.drawing, f"{CHECKBOX} Foo")
+    assert (fill.paint.color, border.paint.color, border.paint.stroke_width) == (
+        THEME.urgent.background, THEME.urgent.text, 3
+    )
+    window.select(foo)
+    assert fill.paint.color == THEME.selection.background and border.paint.color == THEME.urgent.text
+
+
+def test_a_task_ticked_done_is_no_longer_drawn_urgent() -> None:
+    root, goals, _ = _tree()
+    io = goals.children[0]
+    io.task = Task(done=True)
+    drawing = MapDrawing(THEME, SETTINGS)
+    drawing.urgent = {io}
+    _draw(drawing, root)
+    fill, border, _ = _box(drawing, f"{CHECKBOX_DONE} I/O")
+    assert fill.paint.color == THEME.task_done.background and border.paint.color == THEME.edge
+
+
+def test_a_change_made_in_taskwarrior_reaches_the_window(tmp_path: Path) -> None:
+    window, _, _, tw = _task_window(tmp_path)
+    _run_sync(window)
+    tw.tick()
+    tw.edit(cast(TaskLink, _foo(window).task_link).uuid, status="completed")
+    _run_sync(window)
+    assert cast(Task, _foo(window).task).done
+    assert _box(window.drawing, f"{CHECKBOX_DONE} Foo")[0].paint.color == THEME.task_done.background
+
+
+def test_a_task_deleted_in_taskwarrior_leaves_the_window_with_the_root_selected(tmp_path: Path) -> None:
+    window, _, _, tw = _task_window(tmp_path)
+    _run_sync(window)
+    foo = _foo(window)
+    window.select(foo)
+    tw.tick()
+    tw.edit(cast(TaskLink, foo.task_link).uuid, status="deleted")
+    _run_sync(window)
+    assert window.mindmap.root.children[0].children == [] and window.selected is window.mindmap.root
+
+
+def test_a_result_for_a_map_changed_during_the_sync_is_dropped_and_the_sync_run_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window, _, _, tw = _task_window(tmp_path)
+    real_run_sync = tasksync.run_sync
+    runs: list[int] = []
+
+    def changing_meanwhile(
+        snap: tasksync.Snapshot, taskwarrior: Taskwarrior, map_path: Path, map_time: datetime
+    ) -> tasksync.SyncResult:
+        runs.append(1)
+        if len(runs) == 1:
+            window.editor.version += 1  # as an edit made while the sync ran
+        return real_run_sync(snap, taskwarrior, map_path, map_time)
+
+    monkeypatch.setattr("jiyuu.ui.tasks.tasksync.run_sync", changing_meanwhile)
+    _run_sync(window)
+    assert len(runs) == 2 and _foo(window).task_link is not None
+    assert tw.calls.count("import") == 2
+
+
+def test_without_taskwarrior_the_window_says_so_once_and_does_not_sync(tmp_path: Path) -> None:
+    window, page, _, tw = _task_window(tmp_path)
+    tw.missing = True
+    _run_sync(window)
+    _run_sync(window)
+    banners = [d for d in page.dialogs if isinstance(d, ft.Banner)]
+    assert len(banners) == 1 and "cannot be run" in cast(ft.Text, banners[0].content).value
+    assert "export" not in tw.calls and _foo(window).task_link is None
+
+
+def test_a_failing_sync_is_reported_once(tmp_path: Path) -> None:
+    window, page, _, tw = _task_window(tmp_path)
+    tw.failing = TaskwarriorError("task import: disk full")
+    _run_sync(window)
+    _run_sync(window)
+    banners = [d for d in page.dialogs if isinstance(d, ft.Banner)]
+    assert len(banners) == 1 and "disk full" in cast(ft.Text, banners[0].content).value
+    _click_button(banners[0], "Close")
+    assert page.dialogs == []
+
+
+def test_a_map_with_no_task_is_not_synced(tmp_path: Path) -> None:
+    window, _, path, tw = _task_window(tmp_path)
+    path.write_text("- Project\n", encoding="utf-8")
+    window.saving.check_disk()
+    _run_sync(window)
+    assert tw.calls == []
+
+
+def test_a_save_asks_for_a_sync(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    window, page, _, _ = _task_window(tmp_path)
+    window.tasks.running = False
+    _press(window, "Arrow Right")
+    _press(window, "Insert")
+    _submit(window, "Bar")
+    _run_saves(page, monkeypatch)
+    assert page.handlers()[-1] == window.tasks._sync  # pylint: disable=protected-access
+
+
+def test_a_sync_asked_for_while_one_runs_runs_after_it() -> None:
+    root, _, _ = _tree()
+    window, page = _window(root)
+    window.tasks.request()
+    tasks = len(page.tasks)
+    window.tasks.request()
+    assert window.tasks.again and len(page.tasks) == tasks
+
+
+def test_the_task_dialog_reads_a_date_taskwarrior_understands(tmp_path: Path) -> None:
+    window, _, _, tw = _task_window(tmp_path)
+    tw.dates["tomorrow"] = "2026-10-21"
+    goals = window.mindmap.root.children[0]
+    dialog = _task_dialog(window, goals)
+    dialog.due.value = "tomorrow"
+    _click_button(dialog.dialog, "Save")
+    assert goals.task == Task(due="2026-10-21")

@@ -31,7 +31,11 @@ Keys that change the map, each acting on the selected node (see `jiyuu.editing`)
 
 Every change, folds included, is saved to the map's file shortly after it is made (see
 `jiyuu.ui.saving`). The File menu above the map exports it to other formats (see
-`jiyuu.ui.export`).
+`jiyuu.ui.export`). The map's tasks are synced with taskwarrior after each save and every
+minute (see `jiyuu.ui.tasks`); a task taskwarrior finds urgent is drawn in the theme's
+urgent colours. When the map's file is changed by something else while the window has no
+unsaved change, and no text field or task dialog is open, the file is read again without
+asking, and the node selected stays selected if it is still there.
 
 Nodes are drawn as shapes on canvases (see `jiyuu.ui.canvas`), which cannot receive a click
 of their own; a click is matched to a node by where it lands on the map.
@@ -66,18 +70,21 @@ from typing import cast
 
 import flet as ft
 
+from .. import tasksync
 from ..document import Document
 from ..editing import Editor
-from ..layout import Edge, LayoutSettings, Plane, Rect, checkbox_right, layout
+from ..layout import LayoutSettings, Plane, Rect, checkbox_right, layout
 from ..measure import DEFAULT_FONT_PATH, DEFAULT_FONT_SIZE, PillowMeasurer
-from ..model import MindMap, Node, Task
+from ..model import MindMap, Node, Task, node_id, path_of, walk
 from ..navigation import DOWN, HOME, LEFT, RIGHT, UP, Navigator, is_inside
+from ..taskwarrior import Taskwarrior
 from ..theme import Theme
 from ..view import View
 from .canvas import CORNER_RADIUS, FONT_FAMILY, MapDrawing
 from .dialogs import TaskDialog
 from .export import file_menu
 from .saving import Saving, window_title
+from .tasks import WindowSync
 
 #: How much a Ctrl + two-finger vertical move zooms: each pixel moved multiplies the scale
 #: by `1 + ZOOM_PER_PIXEL * pixels`. The sign was chosen by hand on a trackpad with natural
@@ -149,17 +156,16 @@ class TextEdit:
 
 class MapWindow:
     """The window's state — the map, its layout, the drawing surface, the view — and its
-    controls."""
+    controls. `taskwarrior` is the `task` command the map's tasks are synced with."""
 
-    def __init__(self, page: ft.Page, doc: Document, theme: Theme) -> None:
+    def __init__(self, page: ft.Page, doc: Document, theme: Theme, taskwarrior: Taskwarrior | None = None) -> None:
         self.page = page
-        mindmap = self.mindmap = doc.mindmap
+        mindmap = doc.mindmap
         self.theme = theme
         self.measurer = PillowMeasurer(DEFAULT_FONT_PATH)
         self.settings = LayoutSettings()
         self.plane = Plane()
         self.rects: dict[Node, Rect] = {}
-        self.edges: list[Edge] = []
         self.view = View()
         #: The window area the map is shown in, once its size is known.
         self.window_size: tuple[float, float] | None = None
@@ -178,7 +184,34 @@ class MapWindow:
         #: The map's drawing surface. Its `left`, `top` and `scale` are the view.
         self.surface = ft.Stack(controls=[self.layer])
         self.drawing = MapDrawing(theme, self.settings)
-        self.saving = Saving(page, doc, theme, self.show_map, self.take_keyboard)
+        #: The task dialog shown, if any.
+        self.task_dialog: TaskDialog | None = None
+        self.saving = Saving(
+            page,
+            doc,
+            theme,
+            self.show_map,
+            self.take_keyboard,
+            on_saved=self._saved,
+            can_reload=lambda: self.text_edit is None and self.task_dialog is None,
+        )
+        self.tasks = WindowSync(
+            page,
+            doc,
+            taskwarrior if taskwarrior is not None else Taskwarrior(),
+            version=lambda: self.editor.version,
+            on_synced=self.apply_sync,
+            notify=self.saving.notify,
+        )
+
+    @property
+    def mindmap(self) -> MindMap:
+        """The map shown: the document's."""
+        return self.saving.doc.mindmap
+
+    def _saved(self) -> None:
+        # Called by `saving` after each save; `tasks` is made after `saving`.
+        self.tasks.request()
 
     def control(self) -> ft.Control:
         """The window's whole content: the File menu, and the map below it."""
@@ -218,12 +251,12 @@ class MapWindow:
     def redraw(self) -> None:
         """Lays the map out again and moves every control drawing it to its new place."""
         root = self.mindmap.root
-        rects, self.edges = layout(root, self.measurer, self.settings)
+        rects, edges = layout(root, self.measurer, self.settings)
         self.rects = self.plane.fit(rects, MARGIN)
         size = (self.plane.width, self.plane.height)
         self.surface.width, self.surface.height = size
         self.layer.width, self.layer.height = size
-        self.layer.controls = self.drawing.draw(root, self.rects, self.edges, size, self.selected)
+        self.layer.controls = self.drawing.draw(root, self.rects, edges, size, self.selected)
         self.apply_view()
 
     def apply_view(self) -> None:
@@ -330,17 +363,40 @@ class MapWindow:
             self.page.run_task(self.keyboard.focus)
 
     def show_map(self, mindmap: MindMap) -> None:
-        """Shows `mindmap` instead of the map shown so far, with the root selected. The undo
-        history of the map shown so far is dropped."""
+        """Shows `mindmap` instead of the map shown so far, such as the same map read again
+        from its file. The node with the same id as the one selected is selected, or the
+        root if there is none; the view stays where it was. The undo history of the map
+        shown so far is dropped, and the new map is synced with taskwarrior."""
         if self.text_edit is not None:
             self.text_edit = None
             self.surface.controls = [self.layer]
-        self.mindmap = mindmap
+        # The tree shown so far is the editor's: the document may already hold `mindmap`.
+        shown = self.editor.root
+        selected_id = None if self.selected is shown else node_id(path_of(self.selected, shown))
+        self.saving.doc.mindmap = mindmap
         self.editor = Editor(mindmap.root, mindmap.orphan_tasks)
         self.navigator = Navigator(mindmap.root)
-        self.selected = mindmap.root
+        same = (node for node in walk(mindmap.root) if node_id(path_of(node, mindmap.root)) == selected_id)
+        self.selected = next(same, mindmap.root) if selected_id is not None else mindmap.root
+        self.drawing.urgent = set()
         self.redraw()
         self.page.update(self.layer, self.surface)
+        self.tasks.request()
+
+    def apply_sync(self, result: tasksync.SyncResult) -> None:
+        """Makes the changes a sync with taskwarrior brought to the map, and draws the
+        tasks it found urgent as such. The changes are not added to the undo history; the
+        selection moves to the root if the node selected was deleted."""
+        changed = tasksync.apply(self.mindmap, result)
+        urgent = {node for node, urgency in result.urgency.items() if urgency >= self.tasks.threshold}
+        urgent_changed = urgent != self.drawing.urgent
+        self.drawing.urgent = urgent
+        if changed:
+            in_tree = self.selected is self.mindmap.root or self.selected in set(walk(self.mindmap.root))
+            self.show_change(self.selected if in_tree else self.mindmap.root, reveal=False)
+        elif urgent_changed:
+            self.redraw()
+            self.page.update(self.layer, self.surface)
 
     def _on_field_done(self, event: ft.Event[ft.TextField]) -> None:
         # Called when Enter submits the field and when the field loses the keyboard. One
@@ -374,6 +430,7 @@ class MapWindow:
         and, if `reveal`, panned into the window; sends the drawing and the surface."""
         self.selected = selected
         self.saving.changed()
+        self.tasks.changed()
         self.redraw()
         if reveal and self.window_size is not None:
             self.view.reveal(self.rects[selected], *self.window_size, REVEAL_MARGIN)
@@ -453,13 +510,15 @@ class MapWindow:
         no modifier key counted as held."""
         if node is self.mindmap.root:
             return None
-        dialog = TaskDialog(
+        dialog = self.task_dialog = TaskDialog(
             self.page,
             self.theme,
             text=node.text,
             task=node.task,
             on_chosen=lambda task: self._set_task(node, task),
             on_closed=self._task_dialog_closed,
+            resolve_due=self.tasks.resolve_due,
+            due_hint="YYYY-MM-DD, YYYY-MM-DDTHH:MM, or a date taskwarrior understands (tomorrow, friday)",
         )
         dialog.show()
         return dialog
@@ -467,6 +526,7 @@ class MapWindow:
     def _task_dialog_closed(self) -> None:
         # Ctrl was held to open the dialog, and is let go while the dialog has the
         # keyboard, so the window never sees it released.
+        self.task_dialog = None
         self.held.clear()
         self.take_keyboard()
 

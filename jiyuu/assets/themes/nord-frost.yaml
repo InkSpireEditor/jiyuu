@@ -8,6 +8,8 @@ root: {text: "#eceff4", background: "#4c566a"}
 # Done tasks: nord1 as the background; the text is a grey between nord3 and nord4,
 # not a Nord colour, since nord3's contrast against nord1 is too low to read.
 task_done: {text: "#8a94a8", background: "#3b4252"}
+# Urgent tasks: nord6 on nord11.
+urgent: {text: "#eceff4", background: "#bf616a"}
 levels:
   - {text: "#2e3440", background: "#8fbcbb"}
   - {text: "#2e3440", background: "#88c0d0"}
