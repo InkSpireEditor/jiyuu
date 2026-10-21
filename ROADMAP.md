@@ -2390,6 +2390,19 @@ text; the uuid and `synced` are made up):
 - Done when: the tests pass. A file saved before this step keeps the `0600` it was given;
   `chmod` puts it back.
 
+### Step 23: Release 1.1.0
+
+- [x] Status: `done`
+- Depends on: 22.
+- Tasks:
+  - [x] `uv version 1.1.0`: `pyproject.toml` and `uv.lock`.
+  - [x] Annotated tag `v1.1` (`git tag -a v1.1 -m "jiyuu 1.1.0"`) on the user's commit of
+        this step. Pushing it is left to the user.
+- Tests:
+  - [x] `jiyuu version` prints `1.1.0` (`tests/test_cli.py`); the installed command prints
+        `jiyuu.__version__` (`tests/test_install.py`).
+- Done when: the tests pass and the tag exists.
+
 ## Later (not scheduled)
 
 Search across nodes; drag-and-drop to move a node; notes, icons, colours, and links between
